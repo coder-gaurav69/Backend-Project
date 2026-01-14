@@ -68,10 +68,10 @@ export class ClientGroupService {
             ...(filter?.groupCode && { groupCode: filter.groupCode }),
             ...(search && {
                 OR: [
-                    { groupName: { contains: search, mode: 'insensitive' } },
-                    { groupCode: { contains: search, mode: 'insensitive' } },
-                    { cgNumber: { contains: search, mode: 'insensitive' } },
-                    { country: { contains: search, mode: 'insensitive' } },
+                    { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    { groupCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    { cgNumber: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    { country: { contains: search, mode: Prisma.QueryMode.insensitive } },
                 ],
             }),
         };
@@ -214,8 +214,8 @@ export class ClientGroupService {
     }
 
     async bulkCreate(dto: BulkCreateClientGroupDto, userId: string) {
-        const results = [];
-        const errors = [];
+        const results: any[] = [];
+        const errors: any[] = [];
 
         await this.prisma.$transaction(async (tx) => {
             for (const clientGroupDto of dto.clientGroups) {
@@ -265,8 +265,8 @@ export class ClientGroupService {
     }
 
     async bulkUpdate(dto: BulkUpdateClientGroupDto, userId: string) {
-        const results = [];
-        const errors = [];
+        const results: any[] = [];
+        const errors: any[] = [];
 
         await this.prisma.$transaction(async (tx) => {
             for (const update of dto.updates) {
@@ -302,8 +302,8 @@ export class ClientGroupService {
     }
 
     async bulkDelete(dto: BulkDeleteClientGroupDto, userId: string) {
-        const results = [];
-        const errors = [];
+        const results: any[] = [];
+        const errors: any[] = [];
 
         await this.prisma.$transaction(async (tx) => {
             for (const id of dto.ids) {
@@ -365,7 +365,7 @@ export class ClientGroupService {
         }
 
         const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.load(file.buffer);
+        await workbook.xlsx.load(file.buffer as any);
 
         const worksheet = workbook.getWorksheet(1);
         if (!worksheet) {
@@ -373,7 +373,7 @@ export class ClientGroupService {
         }
 
         const clientGroups: CreateClientGroupDto[] = [];
-        const errors = [];
+        const errors: any[] = [];
 
         // Validate headers
         const headers = worksheet.getRow(1).values as any[];
