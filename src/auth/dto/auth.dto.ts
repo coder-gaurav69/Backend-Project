@@ -1,4 +1,9 @@
-import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional, IsEnum } from 'class-validator';
+
+export enum OtpChannel {
+    EMAIL = 'EMAIL',
+    SMS = 'SMS'
+}
 
 export class RegisterDto {
     @IsEmail()
@@ -13,6 +18,14 @@ export class RegisterDto {
 
     @IsString()
     lastName: string;
+
+    @IsString()
+    @IsOptional()
+    phoneNumber?: string;
+
+    @IsEnum(OtpChannel)
+    @IsOptional()
+    otpChannel?: OtpChannel;
 }
 
 export class LoginDto {
@@ -21,6 +34,14 @@ export class LoginDto {
 
     @IsString()
     password: string;
+}
+
+export class VerifyLoginDto {
+    @IsEmail()
+    email: string;
+
+    @IsString()
+    otp: string;
 }
 
 export class VerifyOtpDto {

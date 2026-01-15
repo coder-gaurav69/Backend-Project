@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import {
     RegisterDto,
     LoginDto,
+    VerifyLoginDto,
     VerifyOtpDto,
     RefreshTokenDto,
     ChangePasswordDto,
@@ -35,6 +36,13 @@ export class AuthController {
         const ipAddress = req.ip || req.socket.remoteAddress || '';
         const userAgent = req.headers['user-agent'];
         return this.authService.login(dto, ipAddress, userAgent);
+    }
+
+    @Post('verify-login')
+    async verifyLogin(@Body() dto: VerifyLoginDto, @Req() req: Request) {
+        const ipAddress = req.ip || req.socket.remoteAddress || '';
+        const userAgent = req.headers['user-agent'];
+        return this.authService.verifyLogin(dto, ipAddress, userAgent);
     }
 
     @Post('refresh')

@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { ClientGroupModule } from './client-group/client-group.module';
 import { PdfModule } from './pdf/pdf.module';
 import { DemoModule } from './demo/demo.module';
+import { NotificationModule } from './notification/notification.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
@@ -34,6 +35,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     ClientGroupModule,
     PdfModule,
     DemoModule,
+    NotificationModule,
   ],
   providers: [
     // Global Exception Filter

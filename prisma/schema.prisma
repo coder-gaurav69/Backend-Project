@@ -63,6 +63,8 @@ model User {
   lastLoginAt       DateTime?   @map("last_login_at")
   lastLoginIp       String?     @map("last_login_ip")
   passwordChangedAt DateTime?   @map("password_changed_at")
+  phoneNumber       String?     @unique @map("phone_number")
+  allowedIps        String[]    @default([]) @map("allowed_ips")
   
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

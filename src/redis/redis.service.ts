@@ -48,6 +48,33 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         await this.client.del(`otp:${email}`);
     }
 
+    // Temporary Registration Management
+    async setTempUser(email: string, data: any, ttl: number = 600): Promise<void> {
+        await this.client.setex(`temp_user:${email}`, ttl, JSON.stringify(data));
+    }
+
+    async getTempUser(email: string): Promise<any> {
+        const data = await this.client.get(`temp_user:${email}`);
+        return data ? JSON.parse(data) : null;
+    }
+
+    async deleteTempUser(email: string): Promise<void> {
+        await this.client.del(`temp_user:${email}`);
+    }
+
+    // Login OTP Management
+    async setLoginOTP(email: string, otp: string, ttl: number = 300): Promise<void> {
+        await this.client.setex(`login_otp:${email}`, ttl, otp);
+    }
+
+    async getLoginOTP(email: string): Promise<string | null> {
+        return await this.client.get(`login_otp:${email}`);
+    }
+
+    async deleteLoginOTP(email: string): Promise<void> {
+        await this.client.del(`login_otp:${email}`);
+    }
+
     // Session Management
     async setSession(sessionId: string, data: any, ttl: number): Promise<void> {
         await this.client.setex(`session:${sessionId}`, ttl, JSON.stringify(data));

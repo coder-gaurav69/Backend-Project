@@ -8,12 +8,15 @@ import { v4 as uuidv4 } from 'uuid';
 import {
     RegisterDto,
     LoginDto,
+    VerifyLoginDto,
     VerifyOtpDto,
     RefreshTokenDto,
     ChangePasswordDto,
     ForgotPasswordDto,
     ResetPasswordDto,
+    OtpChannel,
 } from './dto/auth.dto';
+import { NotificationService } from '../notification/notification.service';
 import { UserRole, UserStatus } from '@prisma/client';
 
 @Injectable()
@@ -25,6 +28,7 @@ export class AuthService {
         private jwtService: JwtService,
         private configService: ConfigService,
         private redisService: RedisService,
+        private notificationService: NotificationService,
     ) { }
 
     async register(dto: RegisterDto, ipAddress: string) {
@@ -36,61 +40,76 @@ export class AuthService {
             throw new ConflictException('Email already registered');
         }
 
+        // Default to EMAIL if not specified
+        const channel = dto.otpChannel || OtpChannel.EMAIL;
+
+        if (channel === OtpChannel.SMS && !dto.phoneNumber) {
+            throw new BadRequestException('Phone number is required for SMS OTP');
+        }
+
+        // Store registration data locally (Redis) instead of creating user
         const hashedPassword = await bcrypt.hash(
             dto.password,
             parseInt(this.configService.get('BCRYPT_ROUNDS', '12')),
         );
 
-        const user = await this.prisma.user.create({
-            data: {
-                email: dto.email,
-                password: hashedPassword,
-                firstName: dto.firstName,
-                lastName: dto.lastName,
-                role: UserRole.EMPLOYEE,
-                status: UserStatus.PENDING_VERIFICATION,
-            },
-        });
+        const tempUserData = {
+            ...dto,
+            password: hashedPassword,
+            ipAddress,
+            otpChannel: channel,
+        };
+
+        const ttl = parseInt(this.configService.get('OTP_EXPIRATION', '600'));
+        await this.redisService.setTempUser(dto.email, tempUserData, ttl);
 
         // Generate and send OTP
         const otp = this.generateOTP();
-        await this.redisService.setOTP(
-            user.email,
-            otp,
-            parseInt(this.configService.get('OTP_EXPIRATION', '600')),
-        );
+        await this.redisService.setOTP(dto.email, otp, ttl);
 
-        // Log activity
-        await this.logActivity(user.id, 'CREATE', 'User registered', ipAddress);
-
-        this.logger.log(`OTP for ${user.email}: ${otp}`); // In production, send via email
+        const recipient = channel === OtpChannel.SMS ? dto.phoneNumber! : dto.email;
+        await this.notificationService.sendOtp(recipient, otp, channel);
 
         return {
-            message: 'Registration successful. Please verify your email with OTP.',
-            userId: user.id,
-            email: user.email,
+            message: `OTP sent to ${channel === OtpChannel.SMS ? 'phone' : 'email'}. Please verify to complete registration.`,
+            email: dto.email,
+            channel,
         };
     }
 
     async verifyOtp(dto: VerifyOtpDto, ipAddress: string) {
         const storedOtp = await this.redisService.getOTP(dto.email);
+        const tempUser = await this.redisService.getTempUser(dto.email);
 
         if (!storedOtp || storedOtp !== dto.otp) {
             throw new BadRequestException('Invalid or expired OTP');
         }
 
-        const user = await this.prisma.user.update({
-            where: { email: dto.email },
+        if (!tempUser) {
+            throw new BadRequestException('Registration session expired. Please register again.');
+        }
+
+        // Create the user now
+        const user = await this.prisma.user.create({
             data: {
-                isEmailVerified: true,
+                email: tempUser.email,
+                password: tempUser.password,
+                firstName: tempUser.firstName,
+                lastName: tempUser.lastName,
+                phoneNumber: tempUser.phoneNumber,
+                role: UserRole.EMPLOYEE,
                 status: UserStatus.ACTIVE,
-            },
+                isEmailVerified: true,
+                allowedIps: [tempUser.ipAddress], // Add registration IP to allowed list
+            } as any,
         });
 
         await this.redisService.deleteOTP(dto.email);
-        await this.logActivity(user.id, 'OTP_VERIFICATION', 'Email verified', ipAddress);
+        await this.redisService.deleteTempUser(dto.email);
 
-        return { message: 'Email verified successfully' };
+        await this.logActivity(user.id, 'CREATE', 'User registered and verified', ipAddress);
+
+        return { message: 'Account created and verified successfully. You can now login.' };
     }
 
     async login(dto: LoginDto, ipAddress: string, userAgent?: string) {
@@ -111,8 +130,39 @@ export class AuthService {
             throw new UnauthorizedException('Account is not active');
         }
 
-        if (!user.isEmailVerified) {
-            throw new UnauthorizedException('Email not verified');
+        // Generate and send Login OTP
+        const otp = this.generateOTP();
+        const ttl = 300; // 5 mins
+        await this.redisService.setLoginOTP(user.email, otp, ttl);
+
+        this.logger.log(`Login OTP for ${user.email}: ${otp}`);
+
+        return {
+            message: 'Credentials verified. Please verify OTP to complete login.',
+            email: user.email,
+        };
+    }
+
+    async verifyLogin(dto: VerifyLoginDto, ipAddress: string, userAgent?: string) {
+        const storedOtp = await this.redisService.getLoginOTP(dto.email);
+
+        if (!storedOtp || storedOtp !== dto.otp) {
+            throw new UnauthorizedException('Invalid or expired OTP');
+        }
+
+        const user = await this.prisma.user.findUnique({
+            where: { email: dto.email },
+        });
+
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+
+        // Strict IP Check
+        const allowedIps = user.allowedIps || [];
+        if (!allowedIps.includes(ipAddress)) {
+            this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
+            throw new UnauthorizedException('Access denied. Unrecognized IP address.');
         }
 
         // Generate tokens
@@ -151,6 +201,7 @@ export class AuthService {
         });
 
         await this.redisService.setRefreshToken(refreshToken, user.id, refreshExpiry);
+        await this.redisService.deleteLoginOTP(user.email);
 
         // Update last login
         await this.prisma.user.update({
@@ -161,7 +212,7 @@ export class AuthService {
             },
         });
 
-        await this.logActivity(user.id, 'LOGIN', 'User logged in', ipAddress);
+        await this.logActivity(user.id, 'LOGIN', 'User logged in (Strict)', ipAddress);
 
         return {
             accessToken,

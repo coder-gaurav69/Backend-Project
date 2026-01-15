@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
+import { RedisService } from '../redis/redis.service';
 import { ClientGroupService } from '../client-group/client-group.service';
 import { PdfService, ApiSection, ApiEndpoint } from '../pdf/pdf.service';
 import { v4 as uuidv4 } from 'uuid';
@@ -13,6 +14,7 @@ export class DemoService {
         private authService: AuthService,
         private clientGroupService: ClientGroupService,
         private pdfService: PdfService,
+        private redisService: RedisService,
     ) { }
 
     async runDemo() {
@@ -29,89 +31,79 @@ export class DemoService {
         let token: string;
 
         try {
-            // Register
+            // Register (Step 1)
+            this.logger.log('Testing Register (Step 1)...');
             const regDto = {
                 email,
                 password,
                 firstName: 'Demo',
                 lastName: 'User',
             };
-
-            this.logger.log('Testing Register...');
             const regResult = await this.authService.register(regDto, ip);
-            userId = regResult.userId;
 
             authSection.apis.push({
-                name: 'Register User',
+                name: 'Register User (Step 1)',
                 endpoint: '/api/v1/auth/register',
                 method: 'POST',
-                description: 'Register a new user account',
+                description: 'Initiate registration',
                 authRequired: false,
                 requestExample: regDto,
                 responseExample: regResult,
             });
 
-            // Verify OTP (Simulate)
-            // In real backend we would fetch OTP from Redis, but here we can just "simulate" successful verification
-            // actually we can't easily fetch OTP here without exposing it.
-            // But verifyOtp is needed to login. 
-            // I can't verify OTP without knowing it.
-            // I'll skip Verification if I can, OR since I am "Senior Backend Architect", I'll peek into Redis?
-            // No, for the demo I'll assume manual verification or just "simulate" the flow description
-            // Actually, I can use `prisma.user.update` to force verify for the demo to proceed?
-            // But `demo.service` doesn't have Prisma access unless I inject it.
-            // I'll skip "Verify OTP" EXECUTION but document it.
-            // But wait, `login` checks for verification.
+            // Verify OTP (Step 2)
+            // Fetch OTP from Redis for the demo
+            const regOtp = await this.redisService.getOTP(email);
+            if (regOtp) {
+                this.logger.log(`Testing Verify OTP (Step 2) with OTP: ${regOtp}...`);
+                const verifyResult = await this.authService.verifyOtp({ email, otp: regOtp }, ip);
 
-            // HACK: I will inject PrismaService to force verify the user for the sake of the demo script.
-            // This is acceptable for a "simulated environment".
-            // ... I'll skip injecting Prisma here to keep it clean.
+                authSection.apis.push({
+                    name: 'Verify Registration OTP (Step 2)',
+                    endpoint: '/api/v1/auth/verify-otp',
+                    method: 'POST',
+                    description: 'Complete registration',
+                    authRequired: false,
+                    requestExample: { email, otp: regOtp },
+                    responseExample: verifyResult,
+                });
+            }
 
-            // Let's assume the Demo requires the user to manually verify if running live?
-            // Or I can add a "force verify" method in AuthService for testing? No.
-
-            // Okay, I'll document the Register/Login calls based on *expected* behavior if I can't run them fully automatically.
-            // BUT, the requirement is "Calls ALL major APIs".
-
-            // I will assume I can't login without verification.
-            // So I will just document the *calls* I *would* make, and maybe catch the error "Email not verified".
+            // Login (Step 1)
+            this.logger.log('Testing Login (Step 1)...');
+            const loginResult = await this.authService.login({ email, password }, ip);
 
             authSection.apis.push({
-                name: 'Verify OTP',
-                endpoint: '/api/v1/auth/verify-otp',
+                name: 'Login (Step 1)',
+                endpoint: '/api/v1/auth/login',
                 method: 'POST',
-                description: 'Verify email with OTP',
+                description: 'Initiate Login',
                 authRequired: false,
-                requestExample: { email: email, otp: '123456' },
-                responseExample: { message: 'Email verified successfully' }
+                requestExample: { email, password },
+                responseExample: loginResult
             });
 
-            // Login (Will fail if not verified, but we record the attempt)
-            this.logger.log('Testing Login...');
-            try {
-                const loginResult = await this.authService.login({ email, password }, ip);
-                userId = loginResult.user.id;
-                token = loginResult.accessToken;
+            // Verify Login OTP (Step 2)
+            const loginOtp = await this.redisService.getLoginOTP(email);
+            if (loginOtp) {
+                this.logger.log(`Testing Login Verification (Step 2) with OTP: ${loginOtp}...`);
+                const verifyLoginResult = await this.authService.verifyLogin({ email, otp: loginOtp }, ip);
+
+                userId = verifyLoginResult.user.id;
+                token = verifyLoginResult.accessToken;
 
                 authSection.apis.push({
-                    name: 'Login',
-                    endpoint: '/api/v1/auth/login',
+                    name: 'Verify Login OTP (Step 2)',
+                    endpoint: '/api/v1/auth/verify-login',
                     method: 'POST',
-                    description: 'Login user',
+                    description: 'Complete Login & Get Tokens',
                     authRequired: false,
-                    requestExample: { email, password },
-                    responseExample: { success: true, ...loginResult }
-                });
-            } catch (e) {
-                // Expected if not verified
-                authSection.apis.push({
-                    name: 'Login',
-                    endpoint: '/api/v1/auth/login',
-                    method: 'POST',
-                    description: 'Login user (Failed due to unverified email in simulation)',
-                    authRequired: false,
-                    requestExample: { email, password },
-                    responseExample: { error: e.message }
+                    requestExample: { email, otp: loginOtp },
+                    responseExample: {
+                        accessToken: '********',
+                        refreshToken: '********',
+                        user: verifyLoginResult.user
+                    }
                 });
             }
 
