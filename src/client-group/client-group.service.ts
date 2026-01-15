@@ -79,8 +79,8 @@ export class ClientGroupService {
         const [data, total] = await Promise.all([
             this.prisma.clientGroup.findMany({
                 where,
-                skip,
-                take: limit,
+                skip: Number(skip),
+                take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
             }),
             this.prisma.clientGroup.count({ where }),
