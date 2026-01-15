@@ -100,7 +100,7 @@ export class AuthService {
                 role: UserRole.EMPLOYEE,
                 status: UserStatus.ACTIVE,
                 isEmailVerified: true,
-                allowedIps: [tempUser.ipAddress], // Add registration IP to allowed list
+                allowedIps: [ipAddress], // Add verification IP to allowed list (Strict Security)
             } as any,
         });
 
@@ -137,8 +137,12 @@ export class AuthService {
 
         this.logger.log(`Login OTP for ${user.email}: ${otp}`);
 
+        // Actually send the OTP to the user's email
+        // We use Email as the default channel for login security
+        await this.notificationService.sendOtp(user.email, otp, OtpChannel.EMAIL);
+
         return {
-            message: 'Credentials verified. Please verify OTP to complete login.',
+            message: 'Credentials verified. OTP has been sent to your email. Please verify to complete login.',
             email: user.email,
         };
     }

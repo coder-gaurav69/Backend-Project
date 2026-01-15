@@ -44,6 +44,7 @@ export class ClientGroupService {
         const clientGroup = await this.prisma.clientGroup.create({
             data: {
                 ...dto,
+                groupNo: dto.groupNo || cgNumber,
                 cgNumber,
                 status: dto.status || ClientGroupStatus.ACTIVE,
                 createdBy: userId,
@@ -238,6 +239,7 @@ export class ClientGroupService {
                     const created = await tx.clientGroup.create({
                         data: {
                             ...clientGroupDto,
+                            groupNo: clientGroupDto.groupNo || cgNumber,
                             cgNumber,
                             status: clientGroupDto.status || ClientGroupStatus.ACTIVE,
                             createdBy: userId,

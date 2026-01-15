@@ -3,8 +3,8 @@ import { ClientGroupStatus } from '@prisma/client';
 
 export class CreateClientGroupDto {
     @IsString()
-    @IsNotEmpty()
-    groupNo: string;
+    @IsOptional()
+    groupNo?: string;
 
     @IsString()
     @IsNotEmpty()
