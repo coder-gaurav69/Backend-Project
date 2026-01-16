@@ -32,7 +32,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserRole } from '@prisma/client';
 
-@Controller('api/v1/client-groups')
+@Controller('client-groups')
 export class ClientGroupController {
     constructor(private clientGroupService: ClientGroupService) { }
 
@@ -111,10 +111,11 @@ export class ClientGroupController {
         return this.clientGroupService.bulkUpdate(dto, userId);
     }
 
-    @Delete('bulk/delete')
+    @Post('bulk/delete-records')
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
     bulkDelete(@Body() dto: BulkDeleteClientGroupDto, @GetUser('id') userId: string) {
+        console.log('API HIT: Bulk Delete Records', dto.ids?.length);
         return this.clientGroupService.bulkDelete(dto, userId);
     }
 

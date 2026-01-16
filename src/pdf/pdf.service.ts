@@ -78,17 +78,17 @@ export class PdfService {
   // Helper Methods
   // =====================
 
-  private addTitle(doc: PDFDocument, text: string) {
+  private addTitle(doc: any, text: string) {
     doc.fontSize(24).font('Helvetica-Bold').text(text, { align: 'center' });
     doc.moveDown();
   }
 
-  private addSubtitle(doc: PDFDocument, text: string) {
+  private addSubtitle(doc: any, text: string) {
     doc.fontSize(16).font('Helvetica').text(text, { align: 'center' });
     doc.moveDown();
   }
 
-  private addSectionHeader(doc: PDFDocument, text: string) {
+  private addSectionHeader(doc: any, text: string) {
     doc.fontSize(18).font('Helvetica-Bold').fillColor('#2563eb').text(text);
     doc.moveDown(0.5);
     doc
@@ -101,12 +101,12 @@ export class PdfService {
     doc.fillColor('#000000');
   }
 
-  private addText(doc: PDFDocument, text: string) {
+  private addText(doc: any, text: string) {
     doc.fontSize(10).font('Helvetica').text(text);
     doc.moveDown(0.3);
   }
 
-  private addCode(doc: PDFDocument, code: string) {
+  private addCode(doc: any, code: string) {
     doc
       .fontSize(9)
       .font('Courier')
@@ -116,7 +116,7 @@ export class PdfService {
     doc.fillColor('#000000');
   }
 
-  private addApiEndpoint(doc: PDFDocument, api: ApiEndpoint) {
+  private addApiEndpoint(doc: any, api: ApiEndpoint) {
     // API Name
     doc.fontSize(12).font('Helvetica-Bold').fillColor('#0f172a').text(api.name);
     doc.moveDown(0.3);

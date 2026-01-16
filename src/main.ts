@@ -34,8 +34,10 @@ async function bootstrap() {
     ],
   });
 
-  // NOTE: Manual prefix in controllers is preferred for custom configurations
-  // app.setGlobalPrefix('api/v1');
+  // Global API Prefix
+  app.setGlobalPrefix('api/v1', {
+    exclude: ['/'],
+  });
 
   // Port
   const port = configService.get('PORT', 3000);

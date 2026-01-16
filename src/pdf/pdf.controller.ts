@@ -3,7 +3,7 @@ import { Response } from 'express';
 import { PdfService } from './pdf.service';
 import * as fs from 'fs';
 
-@Controller('api/v1/pdf')
+@Controller('pdf')
 export class PdfController {
     constructor(private pdfService: PdfService) { }
 

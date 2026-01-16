@@ -3,7 +3,7 @@ import { DemoService } from './demo.service';
 import { Response } from 'express';
 import * as fs from 'fs';
 
-@Controller('api/v1/demo')
+@Controller('demo')
 export class DemoController {
     constructor(private demoService: DemoService) { }
 

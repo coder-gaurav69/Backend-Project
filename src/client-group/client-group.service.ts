@@ -284,12 +284,9 @@ export class ClientGroupService {
         await this.prisma.$transaction(async (tx) => {
             for (const id of dto.ids) {
                 try {
-                    await tx.clientGroup.update({
+                    // HARD DELETE
+                    await tx.clientGroup.delete({
                         where: { id },
-                        data: {
-                            deletedAt: new Date(),
-                            deletedBy: userId,
-                        },
                     });
 
                     results.push(id);
