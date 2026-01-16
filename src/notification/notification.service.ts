@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { NotificationStrategy } from './interfaces/notification-strategy.interface';
 import { EmailStrategy } from './strategies/email.strategy';
 import { SmsStrategy } from './strategies/sms.strategy';
@@ -6,6 +6,7 @@ import { OtpChannel } from '../auth/dto/auth.dto';
 
 @Injectable()
 export class NotificationService {
+    private readonly logger = new Logger(NotificationService.name);
     private strategies: Map<OtpChannel, NotificationStrategy> = new Map();
 
     constructor(
@@ -22,13 +23,13 @@ export class NotificationService {
             throw new BadRequestException('Invalid OTP channel');
         }
 
-        // Always log OTP to console so user can see it in Render Logs
-        console.log(`[AUTH DEBUG] OTP for ${recipient} via ${channel}: ${otp}`);
+        // Secure: Only log to server console for testing, never send to frontend
+        this.logger.log(`[AUTH] Generating OTP for ${recipient} via ${channel}`);
 
         const success = await strategy.sendOtp(recipient, otp);
         if (!success) {
             throw new BadRequestException(
-                `Failed to send OTP via ${channel}. For testing, your OTP is ${otp}. Please check your ${channel} credentials in .env later.`
+                `Failed to send OTP via ${channel}. Please verify your ${channel} settings and try again.`
             );
         }
     }

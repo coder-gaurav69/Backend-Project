@@ -10,20 +10,39 @@ export class EmailStrategy implements NotificationStrategy {
     private readonly logger = new Logger(EmailStrategy.name);
 
     constructor(private configService: ConfigService) {
+        const smtpUser = this.configService.get('SMTP_USER');
+        const isGmail = smtpUser?.includes('gmail.com');
+
+        const transportConfig: any = isGmail
+            ? {
+                service: 'gmail',
+                auth: {
+                    user: smtpUser,
+                    pass: this.configService.get('SMTP_PASS'),
+                },
+            }
+            : {
+                host: this.configService.get('SMTP_HOST'),
+                port: parseInt(this.configService.get('SMTP_PORT', '587')),
+                secure: this.configService.get('SMTP_SECURE') === 'true',
+                auth: {
+                    user: smtpUser,
+                    pass: this.configService.get('SMTP_PASS'),
+                },
+            };
+
         this.transporter = nodemailer.createTransport({
-            host: this.configService.get('SMTP_HOST'),
-            port: parseInt(this.configService.get('SMTP_PORT', '587')),
-            secure: this.configService.get('SMTP_SECURE') === 'true',
-            auth: {
-                user: this.configService.get('SMTP_USER'),
-                pass: this.configService.get('SMTP_PASS'),
-            },
-            // Prevent hanging: Fail after 10 seconds if connection or greeting fails
+            ...transportConfig,
+            pool: true, // Use connection pool
+            maxConnections: 5,
+            maxMessages: 100,
             connectionTimeout: 10000,
             greetingTimeout: 10000,
             socketTimeout: 15000,
             tls: {
-                rejectUnauthorized: false
+                // Do not fail on invalid certificates (common on cloud relays)
+                rejectUnauthorized: false,
+                minVersion: 'TLSv1.2'
             }
         });
     }
