@@ -18,6 +18,10 @@ export class EmailStrategy implements NotificationStrategy {
                 user: this.configService.get('SMTP_USER'),
                 pass: this.configService.get('SMTP_PASS'),
             },
+            // Prevent hanging: Fail after 10 seconds if connection or greeting fails
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 15000,
         });
     }
 

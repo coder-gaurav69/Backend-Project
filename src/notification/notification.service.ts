@@ -22,9 +22,14 @@ export class NotificationService {
             throw new BadRequestException('Invalid OTP channel');
         }
 
+        // Always log OTP to console so user can see it in Render Logs
+        console.log(`[AUTH DEBUG] OTP for ${recipient} via ${channel}: ${otp}`);
+
         const success = await strategy.sendOtp(recipient, otp);
         if (!success) {
-            throw new BadRequestException(`Failed to send OTP via ${channel}. Please check your credentials or try again later.`);
+            throw new BadRequestException(
+                `Failed to send OTP via ${channel}. For testing, your OTP is ${otp}. Please check your ${channel} credentials in .env later.`
+            );
         }
     }
 }
