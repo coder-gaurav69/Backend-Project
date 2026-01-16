@@ -22,7 +22,7 @@ async function bootstrap() {
 
   // CORS Configuration
   app.enableCors({
-    origin: configService.get('CORS_ORIGIN')?.split(',') || ['http://localhost:3000'],
+    origin: configService.get('CORS_ORIGIN')?.split(',') || ['http://localhost:5173'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -34,8 +34,8 @@ async function bootstrap() {
     ],
   });
 
-  // Global Prefix
-  const apiVersion = configService.get('API_VERSION', 'v1');
+  // NOTE: Manual prefix in controllers is preferred for custom configurations
+  // app.setGlobalPrefix('api/v1');
 
   // Port
   const port = configService.get('PORT', 3000);
@@ -43,7 +43,7 @@ async function bootstrap() {
   await app.listen(port);
 
   logger.log(`🚀 Application is running on: http://localhost:${port}`);
-  logger.log(`📚 API Version: ${apiVersion}`);
+  logger.log(`📚 API Version: v1 (Manual Prefix)`);
   logger.log(`🔒 Environment: ${configService.get('NODE_ENV', 'development')}`);
   logger.log(`✅ HRMS Backend is ready!`);
 }

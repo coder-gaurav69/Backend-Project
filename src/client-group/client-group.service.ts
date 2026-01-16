@@ -15,6 +15,7 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { ClientGroupStatus, Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
+import { PassThrough } from 'stream';
 
 @Injectable()
 export class ClientGroupService {
@@ -335,57 +336,92 @@ export class ClientGroupService {
     }
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
-        if (!file) {
-            throw new BadRequestException('No file uploaded');
+        this.logger.log(`[UPLOAD_V4_DEPLOYED] File: ${file?.originalname} | Size: ${file?.size}`);
+
+        if (!file || !file.buffer || file.buffer.length === 0) {
+            throw new BadRequestException('No file data received.');
         }
 
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.load(file.buffer as any);
+        const buffer = file.buffer;
+        const fileName = file.originalname.toLowerCase();
 
-        const worksheet = workbook.getWorksheet(1);
-        if (!worksheet) {
-            throw new BadRequestException('Invalid Excel file');
+        // 1. Identify format: XLSX starts with 'PK' (0x50 0x4B)
+        const isXlsxSignature = buffer[0] === 0x50 && buffer[1] === 0x4B;
+        const isCsvExtension = fileName.endsWith('.csv');
+
+        const workbook = new ExcelJS.Workbook();
+        let formatUsed = '';
+
+        try {
+            if (isXlsxSignature) {
+                formatUsed = 'XLSX';
+                this.logger.log(`[UPLOAD_PARSER] Using XLSX parser for ${fileName}`);
+                await workbook.xlsx.load(buffer as any);
+            } else if (isCsvExtension || fileName.endsWith('.txt')) {
+                formatUsed = 'CSV';
+                this.logger.log(`[UPLOAD_PARSER] Using CSV parser for ${fileName}`);
+                const bufferStream = new PassThrough();
+                bufferStream.end(buffer as any);
+                await workbook.csv.read(bufferStream);
+            } else {
+                throw new BadRequestException('Unsupported file format. Please upload a valid .xlsx or .csv file.');
+            }
+        } catch (error) {
+            this.logger.error(`[UPLOAD_PARSE_FAILED] Format: ${formatUsed}, File: ${fileName}, Error: ${error.message}`);
+            // If it's already a BadRequestException, rethrow it
+            if (error instanceof BadRequestException) throw error;
+            // Otherwise, wrap in a friendly message
+            throw new BadRequestException(`Failed to parse ${formatUsed} file. Please ensure the file is not corrupted.`);
+        }
+
+        const worksheet = workbook.getWorksheet(1) || workbook.worksheets[0];
+        if (!worksheet || worksheet.rowCount < 2) {
+            throw new BadRequestException('The file is empty or missing data rows.');
         }
 
         const clientGroups: CreateClientGroupDto[] = [];
         const errors: any[] = [];
 
-        // Validate headers
-        const headers = worksheet.getRow(1).values as any[];
-        const expectedHeaders = ['groupNo', 'groupName', 'groupCode', 'country', 'status', 'remark'];
+        this.logger.log(`[UPLOAD_DATA] Processing ${worksheet.rowCount - 1} rows from ${formatUsed} file.`);
 
         worksheet.eachRow((row, rowNumber) => {
-            if (rowNumber === 1) return; // Skip header
+            if (rowNumber === 1) return; // Skip Header
 
             try {
-                const values = row.values as any[];
+                const getVal = (idx: number) => {
+                    const cell = row.getCell(idx);
+                    if (!cell || cell.value === null || cell.value === undefined) return '';
+                    if (typeof cell.value === 'object') {
+                        if ('result' in (cell.value as any)) return (cell.value as any).result?.toString().trim();
+                        if ('text' in (cell.value as any)) return (cell.value as any).text?.toString().trim();
+                        return '';
+                    }
+                    return cell.value.toString().trim();
+                };
+
+                const groupName = getVal(2);
+                const groupCode = getVal(3);
+
+                if (!groupName && !groupCode) return; // Skip blank rows
 
                 clientGroups.push({
-                    groupNo: values[1]?.toString() || '',
-                    groupName: values[2]?.toString() || '',
-                    groupCode: values[3]?.toString() || '',
-                    country: values[4]?.toString() || '',
-                    status: values[5] as ClientGroupStatus || ClientGroupStatus.ACTIVE,
-                    remark: values[6]?.toString(),
+                    groupNo: getVal(1),
+                    groupName: groupName,
+                    groupCode: groupCode,
+                    country: getVal(4),
+                    status: (getVal(5).toUpperCase() as ClientGroupStatus) || ClientGroupStatus.ACTIVE,
+                    remark: getVal(6),
                 });
-            } catch (error) {
-                errors.push({
-                    row: rowNumber,
-                    error: error.message,
-                });
+            } catch (e) {
+                errors.push({ row: rowNumber, error: e.message });
             }
         });
 
         if (clientGroups.length === 0) {
-            throw new BadRequestException('No valid data found in Excel file');
+            throw new BadRequestException('No valid data found to import.');
         }
 
-        const result = await this.bulkCreate({ clientGroups }, userId);
-
-        return {
-            ...result,
-            parseErrors: errors,
-        };
+        return this.bulkCreate({ clientGroups }, userId);
     }
 
     private async generateGroupNo(): Promise<string> {

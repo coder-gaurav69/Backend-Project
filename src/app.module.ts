@@ -1,7 +1,7 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE, APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { AuthModule } from './auth/auth.module';
@@ -11,6 +11,8 @@ import { DemoModule } from './demo/demo.module';
 import { NotificationModule } from './notification/notification.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -37,7 +39,9 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
     DemoModule,
     NotificationModule,
   ],
+  controllers: [AppController],
   providers: [
+    AppService,
     // Global Exception Filter
     {
       provide: APP_FILTER,
@@ -59,11 +63,6 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
           enableImplicitConversion: true,
         },
       }),
-    },
-    // Global Rate Limiting
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
     },
   ],
 })
