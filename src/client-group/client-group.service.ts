@@ -407,6 +407,40 @@ export class ClientGroupService {
             throw new BadRequestException('The file is empty or missing data rows.');
         }
 
+        // Read header row (Row 1) to determine column indices dynamically
+        const headerRow = worksheet.getRow(1);
+        const headers: Record<string, number> = {};
+
+        headerRow.eachCell((cell, colNumber) => {
+            const val = cell.value?.toString().toLowerCase().trim().replace(/[\s_-]/g, '') || '';
+            if (val) headers[val] = colNumber;
+        });
+
+        this.logger.log(`[UPLOAD_HEADERS] Found: ${JSON.stringify(headers)}`);
+
+        // Define mandatory and optional column keys (normalized)
+        const keys = {
+            groupNo: ['groupno', 'no', 'id'],
+            groupName: ['groupname', 'name', 'clientgroup'],
+            groupCode: ['groupcode', 'code'],
+            country: ['country', 'location'],
+            status: ['status', 'state'],
+            remark: ['remark', 'notes', 'description']
+        };
+
+        const getColIdx = (possibleKeys: string[]) => possibleKeys.find(k => headers[k] !== undefined);
+
+        const idxName = getColIdx(keys.groupName);
+        const idxCode = getColIdx(keys.groupCode);
+        const idxStatus = getColIdx(keys.status);
+        const idxNo = getColIdx(keys.groupNo);
+        const idxCountry = getColIdx(keys.country);
+        const idxRemark = getColIdx(keys.remark);
+
+        if (!idxName || !idxCode) {
+            throw new BadRequestException(`Missing required columns in header. Found: ${Object.keys(headers).join(', ')}. Required: Group Name, Group Code.`);
+        }
+
         const clientGroups: CreateClientGroupDto[] = [];
         const parseErrors: any[] = [];
 
@@ -420,8 +454,9 @@ export class ClientGroupService {
             if (!row || !row.hasValues) continue;
 
             try {
-                const getVal = (idx: number) => {
-                    const cell = row.getCell(idx);
+                const getVal = (colIdx: number | undefined) => {
+                    if (!colIdx) return '';
+                    const cell = row.getCell(colIdx);
                     if (!cell || cell.value === null || cell.value === undefined) return '';
 
                     // Handle ExcelJS value objects (formulas, shared strings, etc)
@@ -437,21 +472,28 @@ export class ClientGroupService {
                     return val.toString().trim();
                 };
 
-                const groupName = getVal(2);
-                const groupCode = getVal(3);
+                const groupNo = getVal(headers[idxNo!]);
+                const groupName = getVal(headers[idxName]);
+                const groupCode = getVal(headers[idxCode]);
+                const country = getVal(headers[idxCountry!]);
+                const statusRaw = getVal(headers[idxStatus!]).toUpperCase();
+                const remark = getVal(headers[idxRemark!]);
 
-                // Basic validation: if both name and code are missing, it's likely an empty row or junk
-                if (!groupName && !groupCode) {
-                    continue;
+                if (!groupName || !groupCode) {
+                    throw new Error('Missing required fields: Group Name or Group Code');
+                }
+
+                if (idxStatus && statusRaw && statusRaw !== 'ACTIVE' && statusRaw !== 'INACTIVE') {
+                    throw new Error(`Invalid Status: "${statusRaw}". Allowed: ACTIVE, INACTIVE`);
                 }
 
                 clientGroups.push({
-                    groupNo: getVal(1),
-                    groupName: groupName,
-                    groupCode: groupCode,
-                    country: getVal(4),
-                    status: (getVal(5).toUpperCase() as ClientGroupStatus) || ClientGroupStatus.ACTIVE,
-                    remark: getVal(6),
+                    groupNo,
+                    groupName,
+                    groupCode,
+                    country,
+                    status: (statusRaw as ClientGroupStatus) || ClientGroupStatus.ACTIVE,
+                    remark,
                 });
 
                 this.logger.debug(`[UPLOAD_PARSED] Row ${i}: Found ${groupCode}`);
