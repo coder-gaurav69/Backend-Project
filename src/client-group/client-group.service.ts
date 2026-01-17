@@ -193,61 +193,73 @@ export class ClientGroupService {
         const results: any[] = [];
         const errors: any[] = [];
 
-        // Pre-fetch the base starting number to avoid duplicate generation issues in transaction
-        let currentGroupNoStr = await this.generateGroupNo();
+        // 1. Fetch ALL existing group codes and nos from DB to prevent collisions in-memory
+        const allExisting = await this.prisma.clientGroup.findMany({
+            where: { deletedAt: null },
+            select: { groupCode: true, groupNo: true }
+        });
+
+        const existingCodes = new Set(allExisting.map(x => x.groupCode));
+        const existingNos = new Set(allExisting.map(x => x.groupNo));
+
         const prefix = this.configService.get('CG_NUMBER_PREFIX', 'CG-');
-        let currentNum = parseInt(currentGroupNoStr.replace(prefix, ''));
+        let currentNum = parseInt((await this.generateGroupNo()).replace(prefix, ''));
 
-        await this.prisma.$transaction(async (tx) => {
-            // Get all existing groupCodes to check against
-            const existingGroups = await tx.clientGroup.findMany({
-                select: { groupCode: true }
-            });
-            const existingCodes = new Set(existingGroups.map(g => g.groupCode));
-            const codesInCurrentBatch = new Set<string>();
+        // 2. Process each record individually. 
+        // We avoid $transaction here so that one failure doesn't kill the whole 50-record batch.
+        for (const clientGroupDto of dto.clientGroups) {
+            try {
+                // Ensure groupName is not completely empty
+                const groupName = clientGroupDto.groupName?.trim() || clientGroupDto.groupCode || 'Unnamed Group';
 
-            for (const clientGroupDto of dto.clientGroups) {
-                try {
-                    let finalGroupCode = clientGroupDto.groupCode;
+                // --- UNIQUE CODE LOGIC ---
+                let finalGroupCode = clientGroupDto.groupCode?.trim() || `GC-${Date.now()}`;
+                const originalCode = finalGroupCode;
+                let cSuffix = 1;
+                while (existingCodes.has(finalGroupCode)) {
+                    finalGroupCode = `${originalCode}-${cSuffix}`;
+                    cSuffix++;
+                }
+                existingCodes.add(finalGroupCode);
 
-                    // If groupCode is already in DB or in this batch, make it unique
-                    let suffix = 1;
-                    const originalCode = finalGroupCode;
-                    while (existingCodes.has(finalGroupCode) || codesInCurrentBatch.has(finalGroupCode)) {
-                        finalGroupCode = `${originalCode}-${suffix}`;
-                        suffix++;
-                    }
-                    codesInCurrentBatch.add(finalGroupCode);
-
-                    // Generate unique Group No
-                    let finalGroupNo = clientGroupDto.groupNo;
-                    if (!finalGroupNo || finalGroupNo.trim() === '') {
+                // --- UNIQUE NUMBER LOGIC ---
+                let finalGroupNo = clientGroupDto.groupNo?.trim();
+                // If groupNo is missing, or is a plain number like "1", or already exists in DB/batch
+                if (!finalGroupNo || !finalGroupNo.includes(prefix) || existingNos.has(finalGroupNo)) {
+                    finalGroupNo = `${prefix}${currentNum}`;
+                    currentNum++;
+                    // Extremely safe backup check
+                    while (existingNos.has(finalGroupNo)) {
                         finalGroupNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
-
-                    const created = await tx.clientGroup.create({
-                        data: {
-                            ...clientGroupDto,
-                            groupCode: finalGroupCode,
-                            groupNo: finalGroupNo,
-                            status: clientGroupDto.status || ClientGroupStatus.ACTIVE,
-                            createdBy: userId,
-                        },
-                    });
-
-                    results.push(created);
-                } catch (error) {
-                    this.logger.error(`[BULK_CREATE_ERROR] Row failed: ${clientGroupDto.groupCode} - Error: ${error.message}`);
-                    errors.push({
-                        groupCode: clientGroupDto.groupCode,
-                        error: error.message,
-                    });
                 }
-            }
-        });
+                existingNos.add(finalGroupNo);
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Success: ${results.length}, Failed: ${errors.length}`);
+                // 3. Create record
+                const created = await this.prisma.clientGroup.create({
+                    data: {
+                        ...clientGroupDto,
+                        groupName,
+                        groupCode: finalGroupCode,
+                        groupNo: finalGroupNo,
+                        status: clientGroupDto.status || ClientGroupStatus.ACTIVE,
+                        createdBy: userId,
+                    },
+                });
+                results.push(created);
+                this.logger.debug(`[BULK_CREATE_SUCCESS] Created: ${finalGroupCode} as ${finalGroupNo}`);
+
+            } catch (error) {
+                this.logger.error(`[BULK_CREATE_ROW_ERROR] Code: ${clientGroupDto.groupCode} | Error: ${error.message}`);
+                errors.push({
+                    groupCode: clientGroupDto.groupCode,
+                    error: error.message
+                });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Total: ${dto.clientGroups.length} | Success: ${results.length} | Failed: ${errors.length}`);
 
         await this.invalidateCache();
 
