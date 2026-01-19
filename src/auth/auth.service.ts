@@ -130,28 +130,62 @@ export class AuthService {
             throw new UnauthorizedException('Account is not active');
         }
 
-        // Generate and send Login OTP
+        // Check if OTP is enabled via environment variable (default: true)
+        const rawOtpConfig = this.configService.get('OTP_ENABLED');
+        const otpEnabled = this.configService.get('OTP_ENABLED', 'true') === 'true';
+
+        this.logger.log(`DEBUG: OTP Configuration - Raw: "${rawOtpConfig}", Enabled: ${otpEnabled}`);
+
+        if (!otpEnabled) {
+            // OTP is disabled - skip OTP flow and proceed directly to login
+            this.logger.log(`OTP disabled - Direct login for ${user.email}`);
+
+            // Strict IP Check (still enforced even without OTP)
+            const allowedIps = user.allowedIps || [];
+            if (!allowedIps.includes(ipAddress)) {
+                this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
+                throw new UnauthorizedException('Access denied. Unrecognized IP address.');
+            }
+
+            // Return success with flag indicating OTP was skipped
+            return {
+                message: 'Login successful (OTP disabled)',
+                email: user.email,
+                otpSkipped: true,
+            };
+        }
+
+        // OTP is enabled - use existing OTP flow
         const otp = this.generateOTP();
         const ttl = 300; // 5 mins
         await this.redisService.setLoginOTP(user.email, otp, ttl);
 
         this.logger.log(`Login OTP for ${user.email}: ${otp}`);
 
-        // Actually send the OTP to the user's email
-        // We use Email as the default channel for login security
+        // Send the OTP to the user's email
         await this.notificationService.sendOtp(user.email, otp, OtpChannel.EMAIL);
 
         return {
             message: 'Credentials verified. OTP has been sent to your email. Please verify to complete login.',
             email: user.email,
+            otpSkipped: false,
         };
     }
 
     async verifyLogin(dto: VerifyLoginDto, ipAddress: string, userAgent?: string) {
-        const storedOtp = await this.redisService.getLoginOTP(dto.email);
+        // Check if OTP is enabled via environment variable (default: true)
+        const otpEnabled = this.configService.get('OTP_ENABLED', 'true') === 'true';
 
-        if (!storedOtp || storedOtp !== dto.otp) {
-            throw new UnauthorizedException('Invalid or expired OTP');
+        if (otpEnabled) {
+            // OTP is enabled - validate OTP
+            const storedOtp = await this.redisService.getLoginOTP(dto.email);
+
+            if (!storedOtp || storedOtp !== dto.otp) {
+                throw new UnauthorizedException('Invalid or expired OTP');
+            }
+        } else {
+            // OTP is disabled - skip OTP validation
+            this.logger.log(`OTP disabled - Skipping OTP validation for ${dto.email}`);
         }
 
         const user = await this.prisma.user.findUnique({
@@ -162,7 +196,7 @@ export class AuthService {
             throw new UnauthorizedException('User not found');
         }
 
-        // Strict IP Check
+        // Strict IP Check (always enforced)
         const allowedIps = user.allowedIps || [];
         if (!allowedIps.includes(ipAddress)) {
             this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
@@ -205,7 +239,11 @@ export class AuthService {
         });
 
         await this.redisService.setRefreshToken(refreshToken, user.id, refreshExpiry);
-        await this.redisService.deleteLoginOTP(user.email);
+
+        // Clean up OTP if it was used
+        if (otpEnabled) {
+            await this.redisService.deleteLoginOTP(user.email);
+        }
 
         // Update last login
         await this.prisma.user.update({
@@ -216,7 +254,8 @@ export class AuthService {
             },
         });
 
-        await this.logActivity(user.id, 'LOGIN', 'User logged in (Strict)', ipAddress);
+        const loginMethod = otpEnabled ? 'OTP' : 'Direct (OTP disabled)';
+        await this.logActivity(user.id, 'LOGIN', `User logged in via ${loginMethod}`, ipAddress);
 
         return {
             accessToken,

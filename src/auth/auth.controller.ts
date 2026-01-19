@@ -35,7 +35,22 @@ export class AuthController {
     async login(@Body() dto: LoginDto, @Req() req: Request) {
         const ipAddress = req.ip || req.socket.remoteAddress || '';
         const userAgent = req.headers['user-agent'];
-        return this.authService.login(dto, ipAddress, userAgent);
+
+        const loginResult = await this.authService.login(dto, ipAddress, userAgent);
+
+        // If OTP is disabled, automatically complete the login flow
+        if (loginResult.otpSkipped) {
+            // OTP was skipped - proceed directly to token generation
+            const verifyDto: VerifyLoginDto = {
+                email: dto.email,
+                otp: '', // Not needed when OTP is disabled
+            };
+
+            return this.authService.verifyLogin(verifyDto, ipAddress, userAgent);
+        }
+
+        // OTP is enabled - return the standard response asking for OTP
+        return loginResult;
     }
 
     @Post('verify-login')
