@@ -63,7 +63,6 @@ export class ClientGroupService {
 
         // Build where clause
         const where = {
-            deletedAt: null,
             ...(filter?.status && { status: filter.status }),
             ...(filter?.country && { country: filter.country }),
             ...(filter?.groupCode && { groupCode: filter.groupCode }),
@@ -97,7 +96,7 @@ export class ClientGroupService {
 
     async findById(id: string) {
         const clientGroup = await this.prisma.clientGroup.findFirst({
-            where: { id, deletedAt: null },
+            where: { id },
             include: {
                 creator: {
                     select: { id: true, firstName: true, lastName: true, email: true },
@@ -117,7 +116,7 @@ export class ClientGroupService {
 
     async findByGroupCode(groupCode: string) {
         const clientGroup = await this.prisma.clientGroup.findFirst({
-            where: { groupCode, deletedAt: null },
+            where: { groupCode },
         });
 
         if (!clientGroup) {
@@ -175,18 +174,14 @@ export class ClientGroupService {
     async delete(id: string, userId: string) {
         const existing = await this.findById(id);
 
-        await this.prisma.clientGroup.update({
+        await this.prisma.clientGroup.delete({
             where: { id },
-            data: {
-                deletedAt: new Date(),
-                deletedBy: userId,
-            },
         });
 
         await this.invalidateCache();
-        await this.logAudit(userId, 'DELETE', id, existing, null);
+        await this.logAudit(userId, 'HARD_DELETE', id, existing, null);
 
-        return { message: 'Client group deleted successfully' };
+        return { message: 'Client group and all associated data permanently deleted successfully' };
     }
 
     async bulkCreate(dto: BulkCreateClientGroupDto, userId: string) {
@@ -195,7 +190,6 @@ export class ClientGroupService {
 
         // 1. Fetch ALL existing group codes and nos from DB to prevent collisions in-memory
         const allExisting = await this.prisma.clientGroup.findMany({
-            where: { deletedAt: null },
             select: { groupCode: true, groupNo: true }
         });
 
@@ -312,23 +306,24 @@ export class ClientGroupService {
         const results: any[] = [];
         const errors: any[] = [];
 
-        await this.prisma.$transaction(async (tx) => {
-            for (const id of dto.ids) {
-                try {
-                    // HARD DELETE
-                    await tx.clientGroup.delete({
-                        where: { id },
-                    });
+        for (const id of dto.ids) {
+            try {
+                const existing = await this.prisma.clientGroup.findUnique({ where: { id } });
+                if (!existing) continue;
 
-                    results.push(id);
-                } catch (error) {
-                    errors.push({
-                        id,
-                        error: error.message,
-                    });
-                }
+                await this.prisma.clientGroup.delete({
+                    where: { id },
+                });
+
+                await this.logAudit(userId, 'HARD_DELETE', id, existing, null);
+                results.push(id);
+            } catch (error) {
+                errors.push({
+                    id,
+                    error: error.message,
+                });
             }
-        });
+        }
 
         await this.invalidateCache();
 
@@ -340,28 +335,7 @@ export class ClientGroupService {
         };
     }
 
-    async restore(id: string, userId: string) {
-        const clientGroup = await this.prisma.clientGroup.findUnique({
-            where: { id },
-        });
 
-        if (!clientGroup) {
-            throw new NotFoundException('Client group not found');
-        }
-
-        const restored = await this.prisma.clientGroup.update({
-            where: { id },
-            data: {
-                deletedAt: null,
-                deletedBy: null,
-                updatedBy: userId,
-            },
-        });
-
-        await this.invalidateCache();
-
-        return restored;
-    }
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
         this.logger.log(`[UPLOAD_V4_DEPLOYED] File: ${file?.originalname} | Size: ${file?.size}`);

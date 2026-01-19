@@ -75,9 +75,38 @@ model User {
   sessions          Session[]
   auditLogs         AuditLog[]
   activityLogs      ActivityLog[]
+  
+  // Client Group relations
   createdClientGroups ClientGroup[] @relation("CreatedByUser")
   updatedClientGroups ClientGroup[] @relation("UpdatedByUser")
-  deletedClientGroups ClientGroup[] @relation("DeletedByUser")
+  
+  // Client Company relations
+  createdCompanies ClientCompany[] @relation("CompanyCreatedByUser")
+  updatedCompanies ClientCompany[] @relation("CompanyUpdatedByUser")
+  
+  // Client Location relations
+  createdLocations ClientLocation[] @relation("LocationCreatedByUser")
+  updatedLocations ClientLocation[] @relation("LocationUpdatedByUser")
+  
+  // Sub Location relations
+  createdSubLocations SubLocation[] @relation("SubLocationCreatedByUser")
+  updatedSubLocations SubLocation[] @relation("SubLocationUpdatedByUser")
+  
+  // Project relations
+  createdProjects Project[] @relation("ProjectCreatedByUser")
+  updatedProjects Project[] @relation("ProjectUpdatedByUser")
+  
+  // Team relations
+  createdTeams Team[] @relation("TeamCreatedByUser")
+  updatedTeams Team[] @relation("TeamUpdatedByUser")
+  
+  // Group relations
+  createdGroups Group[] @relation("GroupCreatedByUser")
+  updatedGroups Group[] @relation("GroupUpdatedByUser")
+  
+  // IP Address relations
+  createdIpAddresses IpAddress[] @relation("IpAddressCreatedByUser")
+  updatedIpAddresses IpAddress[] @relation("IpAddressUpdatedByUser")
 
   @@index([email])
   @@index([status])
@@ -146,21 +175,23 @@ model ClientGroup {
   
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
   
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
-  deletedBy String? @map("deleted_by") @db.Uuid
   
   // Relations
   creator User? @relation("CreatedByUser", fields: [createdBy], references: [id])
   updater User? @relation("UpdatedByUser", fields: [updatedBy], references: [id])
-  deleter User? @relation("DeletedByUser", fields: [deletedBy], references: [id])
+  
+  // Child modules
+  companies   ClientCompany[]
+  teams       Team[]
+  groups      Group[]
+  ipAddresses IpAddress[]
 
   @@index([groupNo])
   @@index([groupCode])
   @@index([status])
-  @@index([deletedAt])
   @@index([createdAt])
   @@map("client_groups")
 }
@@ -228,4 +259,340 @@ model FileMetadata {
   @@index([uploadedBy])
   @@index([createdAt])
   @@map("file_metadata")
+}
+
+// ============================================
+// HRMS MODULES - CLIENT HIERARCHY
+// ============================================
+
+// Status enums for all modules
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LocationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SubLocationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectStatus {
+  ACTIVE
+  INACTIVE
+  COMPLETED
+  ON_HOLD
+}
+
+enum ProjectPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TeamStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LoginMethod {
+  EMAIL
+  PHONE
+  BOTH
+}
+
+enum GroupStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum IpAddressStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ============================================
+// CLIENT COMPANY MODULE
+// ============================================
+
+model ClientCompany {
+  id          String        @id @default(uuid()) @db.Uuid
+  companyNo   String        @unique @map("company_no")
+  companyName String        @map("company_name")
+  companyCode String        @unique @map("company_code")
+  groupId     String        @map("group_id") @db.Uuid
+  address     String?       @db.Text
+  status      CompanyStatus @default(ACTIVE)
+  remark      String?       @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  group     ClientGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  locations ClientLocation[]
+  subLocations SubLocation[]
+  teams     Team[]
+  groups    Group[]
+  ipAddresses IpAddress[]
+  
+  creator User? @relation("CompanyCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("CompanyUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([companyNo])
+  @@index([companyCode])
+  @@index([groupId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("client_companies")
+}
+
+// ============================================
+// CLIENT LOCATION MODULE
+// ============================================
+
+model ClientLocation {
+  id           String         @id @default(uuid()) @db.Uuid
+  locationNo   String         @unique @map("location_no")
+  locationName String         @map("location_name")
+  locationCode String         @unique @map("location_code")
+  companyId    String         @map("company_id") @db.Uuid
+  address      String?        @db.Text
+  status       LocationStatus @default(ACTIVE)
+  remark       String?        @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  company      ClientCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  subLocations SubLocation[]
+  teams        Team[]
+  groups       Group[]
+  ipAddresses  IpAddress[]
+  
+  creator User? @relation("LocationCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("LocationUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([locationNo])
+  @@index([locationCode])
+  @@index([companyId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("client_locations")
+}
+
+// ============================================
+// SUB LOCATION MODULE
+// ============================================
+
+model SubLocation {
+  id              String            @id @default(uuid()) @db.Uuid
+  subLocationNo   String            @unique @map("sub_location_no")
+  subLocationName String            @map("sub_location_name")
+  subLocationCode String            @unique @map("sub_location_code")
+  companyId       String            @map("company_id") @db.Uuid
+  locationId      String            @map("location_id") @db.Uuid
+  address         String?           @db.Text
+  status          SubLocationStatus @default(ACTIVE)
+  remark          String?           @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  company     ClientCompany  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location    ClientLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  projects    Project[]
+  teams       Team[]
+  groups      Group[]
+  ipAddresses IpAddress[]
+  
+  creator User? @relation("SubLocationCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("SubLocationUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([subLocationNo])
+  @@index([subLocationCode])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("sub_locations")
+}
+
+// ============================================
+// PROJECT MODULE
+// ============================================
+
+model Project {
+  id            String          @id @default(uuid()) @db.Uuid
+  projectNo     String          @unique @map("project_no")
+  projectName   String          @map("project_name")
+  subLocationId String          @map("sub_location_id") @db.Uuid
+  deadline      DateTime?
+  priority      ProjectPriority @default(MEDIUM)
+  status        ProjectStatus   @default(ACTIVE)
+  remark        String?         @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  subLocation SubLocation @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  
+  creator User? @relation("ProjectCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("ProjectUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([projectNo])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([priority])
+  @@index([deadline])
+  @@index([createdAt])
+  @@map("projects")
+}
+
+// ============================================
+// TEAM MODULE
+// ============================================
+
+model Team {
+  id                  String      @id @default(uuid()) @db.Uuid
+  teamNo              String      @unique @map("team_no")
+  teamName            String      @map("team_name")
+  email               String?
+  phone               String?
+  taskAssignPermission Boolean    @default(false) @map("task_assign_permission")
+  clientGroupId       String?     @map("client_group_id") @db.Uuid
+  companyId           String?     @map("company_id") @db.Uuid
+  locationId          String?     @map("location_id") @db.Uuid
+  subLocationId       String?     @map("sub_location_id") @db.Uuid
+  status              TeamStatus  @default(ACTIVE)
+  loginMethod         LoginMethod @default(EMAIL)
+  remark              String?     @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  clientGroup ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
+  company     ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location    ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  subLocation SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  
+  creator User? @relation("TeamCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("TeamUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([teamNo])
+  @@index([clientGroupId])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("teams")
+}
+
+// ============================================
+// GROUP MODULE
+// ============================================
+
+model Group {
+  id            String      @id @default(uuid()) @db.Uuid
+  groupNo       String      @unique @map("group_no")
+  groupName     String      @map("group_name")
+  groupCode     String      @unique @map("group_code")
+  clientGroupId String?     @map("client_group_id") @db.Uuid
+  companyId     String?     @map("company_id") @db.Uuid
+  locationId    String?     @map("location_id") @db.Uuid
+  subLocationId String?     @map("sub_location_id") @db.Uuid
+  status        GroupStatus @default(ACTIVE)
+  remark        String?     @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  clientGroup ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
+  company     ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location    ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  subLocation SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  
+  creator User? @relation("GroupCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("GroupUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([groupNo])
+  @@index([groupCode])
+  @@index([clientGroupId])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("groups")
+}
+
+// ============================================
+// IP ADDRESS MODULE
+// ============================================
+
+model IpAddress {
+  id            String          @id @default(uuid()) @db.Uuid
+  ipNo          String          @unique @map("ip_no")
+  ipAddress     String          @map("ip_address")
+  ipAddressName String          @map("ip_address_name")
+  clientGroupId String?         @map("client_group_id") @db.Uuid
+  companyId     String?         @map("company_id") @db.Uuid
+  locationId    String?         @map("location_id") @db.Uuid
+  subLocationId String?         @map("sub_location_id") @db.Uuid
+  status        IpAddressStatus @default(ACTIVE)
+  remark        String?         @db.Text
+  
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  
+  // Relations
+  clientGroup ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
+  company     ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location    ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  subLocation SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  
+  creator User? @relation("IpAddressCreatedByUser", fields: [createdBy], references: [id])
+  updater User? @relation("IpAddressUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([ipNo])
+  @@index([ipAddress])
+  @@index([clientGroupId])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("ip_addresses")
 }

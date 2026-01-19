@@ -4,8 +4,16 @@ import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { ClientGroupModule } from './client-group/client-group.module';
+import { ClientCompanyModule } from './client-company/client-company.module';
+import { ClientLocationModule } from './client-location/client-location.module';
+import { SubLocationModule } from './sub-location/sub-location.module';
+import { ProjectModule } from './project/project.module';
+import { TeamModule } from './team/team.module';
+import { GroupModule } from './group/group.module';
+import { IpAddressModule } from './ip-address/ip-address.module';
 import { PdfModule } from './pdf/pdf.module';
 import { DemoModule } from './demo/demo.module';
 import { NotificationModule } from './notification/notification.module';
@@ -33,8 +41,20 @@ import { AppService } from './app.service';
     // Core Modules
     PrismaModule,
     RedisModule,
+    CommonModule,
     AuthModule,
+
+    // HRMS Modules
     ClientGroupModule,
+    ClientCompanyModule,
+    ClientLocationModule,
+    SubLocationModule,
+    ProjectModule,
+    TeamModule,
+    GroupModule,
+    IpAddressModule,
+
+    // Other Modules
     PdfModule,
     DemoModule,
     NotificationModule,

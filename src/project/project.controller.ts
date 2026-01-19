@@ -11,20 +11,17 @@ import {
     UseGuards,
     UseInterceptors,
     UploadedFile,
-    UsePipes,
-    ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ClientGroupService } from './client-group.service';
+import { ProjectService } from './project.service';
 import {
-    CreateClientGroupDto,
-    UpdateClientGroupDto,
-    BulkCreateClientGroupDto,
-    BulkUpdateClientGroupDto,
-    BulkDeleteClientGroupDto,
+    CreateProjectDto,
+    UpdateProjectDto,
+    BulkCreateProjectDto,
+    BulkUpdateProjectDto,
+    BulkDeleteProjectDto,
     ChangeStatusDto,
-    FilterClientGroupDto,
-} from './dto/client-group.dto';
+} from './dto/project.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -32,40 +29,34 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UserRole } from '@prisma/client';
 
-@Controller('client-groups')
-export class ClientGroupController {
-    constructor(private clientGroupService: ClientGroupService) { }
+@Controller('projects')
+export class ProjectController {
+    constructor(private projectService: ProjectService) { }
 
     @Post()
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.HR, UserRole.EMPLOYEE)
-    create(@Body() dto: CreateClientGroupDto, @GetUser('id') userId: string) {
-        return this.clientGroupService.create(dto, userId);
+    create(@Body() dto: CreateProjectDto, @GetUser('id') userId: string) {
+        return this.projectService.create(dto, userId);
     }
 
     @Get()
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.HR, UserRole.EMPLOYEE)
     findAll(@Query() query: any) {
-        return this.clientGroupService.findAll(query, query);
+        return this.projectService.findAll(query, query);
     }
 
     @Get('active')
     @UseGuards(JwtAuthGuard)
     findActive(@Query() pagination: PaginationDto) {
-        return this.clientGroupService.findActive(pagination);
+        return this.projectService.findActive(pagination);
     }
 
     @Get(':id')
     @UseGuards(JwtAuthGuard)
     findById(@Param('id') id: string) {
-        return this.clientGroupService.findById(id);
-    }
-
-    @Get('by-code/:groupCode')
-    @UseGuards(JwtAuthGuard)
-    findByGroupCode(@Param('groupCode') groupCode: string) {
-        return this.clientGroupService.findByGroupCode(groupCode);
+        return this.projectService.findById(id);
     }
 
     @Put(':id')
@@ -73,10 +64,10 @@ export class ClientGroupController {
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.HR)
     update(
         @Param('id') id: string,
-        @Body() dto: UpdateClientGroupDto,
+        @Body() dto: UpdateProjectDto,
         @GetUser('id') userId: string,
     ) {
-        return this.clientGroupService.update(id, dto, userId);
+        return this.projectService.update(id, dto, userId);
     }
 
     @Patch(':id/status')
@@ -87,48 +78,53 @@ export class ClientGroupController {
         @Body() dto: ChangeStatusDto,
         @GetUser('id') userId: string,
     ) {
-        return this.clientGroupService.changeStatus(id, dto, userId);
+        return this.projectService.changeStatus(id, dto, userId);
     }
 
     @Delete(':id')
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
     delete(@Param('id') id: string, @GetUser('id') userId: string) {
-        return this.clientGroupService.delete(id, userId);
+        return this.projectService.delete(id, userId);
     }
 
     @Post('bulk/create')
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.HR)
-    bulkCreate(@Body() dto: BulkCreateClientGroupDto, @GetUser('id') userId: string) {
-        return this.clientGroupService.bulkCreate(dto, userId);
+    bulkCreate(@Body() dto: BulkCreateProjectDto, @GetUser('id') userId: string) {
+        return this.projectService.bulkCreate(dto, userId);
     }
 
     @Put('bulk/update')
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.HR)
-    bulkUpdate(@Body() dto: BulkUpdateClientGroupDto, @GetUser('id') userId: string) {
-        return this.clientGroupService.bulkUpdate(dto, userId);
+    bulkUpdate(@Body() dto: BulkUpdateProjectDto, @GetUser('id') userId: string) {
+        return this.projectService.bulkUpdate(dto, userId);
     }
 
     @Post('bulk/delete-records')
     @UseGuards(JwtAuthGuard)
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-    bulkDelete(@Body() dto: BulkDeleteClientGroupDto, @GetUser('id') userId: string) {
-        console.log('API HIT: Bulk Delete Records', dto.ids?.length);
-        return this.clientGroupService.bulkDelete(dto, userId);
+    bulkDelete(@Body() dto: BulkDeleteProjectDto, @GetUser('id') userId: string) {
+        return this.projectService.bulkDelete(dto, userId);
     }
 
 
 
     @Post('upload/excel')
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.HR, UserRole.EMPLOYEE, UserRole.MANAGER)
+    @Roles(
+        UserRole.ADMIN,
+        UserRole.SUPER_ADMIN,
+        UserRole.HR,
+        UserRole.EMPLOYEE,
+        UserRole.MANAGER,
+    )
     @UseInterceptors(FileInterceptor('file'))
     uploadExcel(
         @UploadedFile() file: Express.Multer.File,
         @GetUser('id') userId: string,
     ) {
-        return this.clientGroupService.uploadExcel(file, userId);
+        return this.projectService.uploadExcel(file, userId);
     }
 }
