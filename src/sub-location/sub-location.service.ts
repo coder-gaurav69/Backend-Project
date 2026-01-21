@@ -95,6 +95,10 @@ export class SubLocationService {
                         { subLocationName: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { subLocationCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { subLocationNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { address: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { remark: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { location: { locationName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
+                        { company: { companyName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
                     ]
                 } : {},
             ].filter(condition => condition && Object.keys(condition).length > 0) as any

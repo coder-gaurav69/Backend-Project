@@ -41,6 +41,13 @@ export class TaskService {
             where.OR = [
                 { taskTitle: { contains: filter.search, mode: 'insensitive' } },
                 { taskNo: { contains: filter.search, mode: 'insensitive' } },
+                { additionalNote: { contains: filter.search, mode: 'insensitive' } },
+                { remarkChat: { contains: filter.search, mode: 'insensitive' } },
+                { project: { projectName: { contains: filter.search, mode: 'insensitive' } } },
+                { assignee: { firstName: { contains: filter.search, mode: 'insensitive' } } },
+                { assignee: { lastName: { contains: filter.search, mode: 'insensitive' } } },
+                { creator: { firstName: { contains: filter.search, mode: 'insensitive' } } },
+                { worker: { firstName: { contains: filter.search, mode: 'insensitive' } } },
             ];
         }
 

@@ -118,6 +118,11 @@ export class GroupService {
                         { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { groupCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { groupNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { remark: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { subLocation: { subLocationName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
+                        { location: { locationName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
+                        { company: { companyName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
+                        { clientGroup: { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
                     ]
                 } : {},
             ].filter(condition => condition && Object.keys(condition).length > 0) as any

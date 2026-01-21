@@ -79,6 +79,7 @@ export class ClientGroupService {
                         { groupCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { groupNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { country: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { remark: { contains: search, mode: Prisma.QueryMode.insensitive } },
                     ]
                 } : {},
             ].filter(condition => condition && Object.keys(condition).length > 0) as any

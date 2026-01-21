@@ -93,6 +93,9 @@ export class ClientLocationService {
                         { locationName: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { locationCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { locationNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { address: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { remark: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { company: { companyName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
                     ]
                 } : {},
             ].filter(condition => condition && Object.keys(condition).length > 0) as any

@@ -89,6 +89,10 @@ export class ProjectService {
                     OR: [
                         { projectName: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { projectNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { remark: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { subLocation: { subLocationName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
+                        { subLocation: { location: { locationName: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+                        { subLocation: { location: { company: { companyName: { contains: search, mode: Prisma.QueryMode.insensitive } } } } },
                     ]
                 } : {},
             ].filter(condition => condition && Object.keys(condition).length > 0) as any

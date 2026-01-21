@@ -98,6 +98,8 @@ export class ClientCompanyService {
                         { companyCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { companyNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
                         { address: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { remark: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { group: { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } } },
                     ]
                 } : {},
             ].filter(condition => condition && Object.keys(condition).length > 0) as any
