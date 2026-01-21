@@ -21,6 +21,7 @@ import {
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { ProjectStatus, ProjectPriority, Prisma } from '@prisma/client';
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 
 @Injectable()
 export class ProjectService {
@@ -73,26 +74,24 @@ export class ProjectService {
         } = pagination;
         const skip = (page - 1) * limit;
 
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.priority && { priority: filter.priority }),
-            ...(filter?.subLocationId && { subLocationId: filter.subLocationId }),
-            ...(search && {
-                OR: [
-                    {
-                        projectName: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        projectNo: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                ],
-            }),
+        const where: Prisma.ProjectWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                filter?.priority ? { priority: filter.priority } : {},
+                filter?.subLocationId ? { subLocationId: filter.subLocationId } : {},
+                filter?.locationId ? { subLocation: { locationId: filter.locationId } } : {},
+                filter?.companyId ? { subLocation: { location: { companyId: filter.companyId } } } : {},
+                filter?.clientGroupId ? { subLocation: { location: { company: { groupId: filter.clientGroupId } } } } : {},
+                buildMultiValueFilter('projectName', filter?.projectName),
+                buildMultiValueFilter('projectNo', filter?.projectNo),
+                buildMultiValueFilter('remark', filter?.remark),
+                search ? {
+                    OR: [
+                        { projectName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { projectNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

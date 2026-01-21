@@ -20,6 +20,7 @@ import {
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { IpAddressStatus, Prisma } from '@prisma/client';
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 
 @Injectable()
 export class IpAddressService {
@@ -91,35 +92,25 @@ export class IpAddressService {
         } = pagination;
         const skip = (page - 1) * limit;
 
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.clientGroupId && { clientGroupId: filter.clientGroupId }),
-            ...(filter?.companyId && { companyId: filter.companyId }),
-            ...(filter?.locationId && { locationId: filter.locationId }),
-            ...(filter?.subLocationId && { subLocationId: filter.subLocationId }),
-            ...(filter?.ipAddress && { ipAddress: filter.ipAddress }),
-            ...(search && {
-                OR: [
-                    {
-                        ipAddressName: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        ipAddress: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        ipNo: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                ],
-            }),
+        const where: Prisma.IpAddressWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                filter?.clientGroupId ? { clientGroupId: filter.clientGroupId } : {},
+                filter?.companyId ? { companyId: filter.companyId } : {},
+                filter?.locationId ? { locationId: filter.locationId } : {},
+                filter?.subLocationId ? { subLocationId: filter.subLocationId } : {},
+                buildMultiValueFilter('ipAddress', filter?.ipAddress),
+                buildMultiValueFilter('ipAddressName', filter?.ipAddressName),
+                buildMultiValueFilter('ipNo', filter?.ipNo),
+                buildMultiValueFilter('remark', filter?.remark),
+                search ? {
+                    OR: [
+                        { ipAddressName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { ipAddress: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { ipNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

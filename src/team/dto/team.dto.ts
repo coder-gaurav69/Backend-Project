@@ -144,4 +144,16 @@ export class FilterTeamDto {
     @IsOptional()
     @IsUUID()
     subLocationId?: string;
+
+    @IsOptional()
+    @IsString()
+    teamName?: string;
+
+    @IsOptional()
+    @IsString()
+    teamNo?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

@@ -16,6 +16,7 @@ import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { ClientGroupStatus, Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PassThrough } from 'stream';
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 
 @Injectable()
 export class ClientGroupService {
@@ -62,18 +63,23 @@ export class ClientGroupService {
         const skip = (page - 1) * limit;
 
         // Build where clause
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.country && { country: filter.country }),
-            ...(filter?.groupCode && { groupCode: filter.groupCode }),
-            ...(search && {
-                OR: [
-                    { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } },
-                    { groupCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
-                    { groupNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
-                    { country: { contains: search, mode: Prisma.QueryMode.insensitive } },
-                ],
-            }),
+        const where: Prisma.ClientGroupWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                buildMultiValueFilter('country', filter?.country),
+                buildMultiValueFilter('groupName', filter?.groupName),
+                buildMultiValueFilter('groupNo', filter?.groupNo),
+                buildMultiValueFilter('groupCode', filter?.groupCode),
+                buildMultiValueFilter('remark', filter?.remark),
+                search ? {
+                    OR: [
+                        { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { groupCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { groupNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { country: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

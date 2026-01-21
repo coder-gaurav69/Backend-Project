@@ -108,5 +108,17 @@ export class FilterSubLocationDto {
 
     @IsOptional()
     @IsString()
+    subLocationName?: string;
+
+    @IsOptional()
+    @IsString()
+    subLocationNo?: string;
+
+    @IsOptional()
+    @IsString()
     subLocationCode?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

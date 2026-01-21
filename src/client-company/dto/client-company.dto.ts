@@ -95,5 +95,17 @@ export class FilterClientCompanyDto {
 
     @IsOptional()
     @IsString()
+    companyName?: string;
+
+    @IsOptional()
+    @IsString()
+    companyNo?: string;
+
+    @IsOptional()
+    @IsString()
     companyCode?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

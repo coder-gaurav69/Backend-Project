@@ -124,4 +124,16 @@ export class FilterIpAddressDto {
     @IsOptional()
     @IsString()
     ipAddress?: string;
+
+    @IsOptional()
+    @IsString()
+    ipAddressName?: string;
+
+    @IsOptional()
+    @IsString()
+    ipNo?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

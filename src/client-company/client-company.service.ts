@@ -21,6 +21,7 @@ import {
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { CompanyStatus, Prisma } from '@prisma/client';
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 
 @Injectable()
 export class ClientCompanyService {
@@ -83,38 +84,23 @@ export class ClientCompanyService {
         const skip = (page - 1) * limit;
 
         // Build where clause
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.groupId && { groupId: filter.groupId }),
-            ...(filter?.companyCode && { companyCode: filter.companyCode }),
-            ...(search && {
-                OR: [
-                    {
-                        companyName: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        companyCode: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        companyNo: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        address: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                ],
-            }),
+        const where: Prisma.ClientCompanyWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                filter?.groupId ? { groupId: filter.groupId } : {},
+                buildMultiValueFilter('companyName', filter?.companyName),
+                buildMultiValueFilter('companyNo', filter?.companyNo),
+                buildMultiValueFilter('companyCode', filter?.companyCode),
+                buildMultiValueFilter('remark', filter?.remark),
+                search ? {
+                    OR: [
+                        { companyName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { companyCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { companyNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { address: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

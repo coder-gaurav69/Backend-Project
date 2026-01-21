@@ -87,5 +87,17 @@ export class FilterClientGroupDto {
 
     @IsOptional()
     @IsString()
+    groupName?: string;
+
+    @IsOptional()
+    @IsString()
+    groupNo?: string;
+
+    @IsOptional()
+    @IsString()
     groupCode?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

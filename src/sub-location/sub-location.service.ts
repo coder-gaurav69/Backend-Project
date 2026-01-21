@@ -21,6 +21,7 @@ import {
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { SubLocationStatus, Prisma } from '@prisma/client';
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 
 @Injectable()
 export class SubLocationService {
@@ -80,33 +81,23 @@ export class SubLocationService {
         } = pagination;
         const skip = (page - 1) * limit;
 
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.companyId && { companyId: filter.companyId }),
-            ...(filter?.locationId && { locationId: filter.locationId }),
-            ...(filter?.subLocationCode && { subLocationCode: filter.subLocationCode }),
-            ...(search && {
-                OR: [
-                    {
-                        subLocationName: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        subLocationCode: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        subLocationNo: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                ],
-            }),
+        const where: Prisma.SubLocationWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                filter?.companyId ? { companyId: filter.companyId } : {},
+                filter?.locationId ? { locationId: filter.locationId } : {},
+                buildMultiValueFilter('subLocationName', filter?.subLocationName),
+                buildMultiValueFilter('subLocationNo', filter?.subLocationNo),
+                buildMultiValueFilter('subLocationCode', filter?.subLocationCode),
+                buildMultiValueFilter('remark', filter?.remark),
+                search ? {
+                    OR: [
+                        { subLocationName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { subLocationCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { subLocationNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

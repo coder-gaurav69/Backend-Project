@@ -21,6 +21,7 @@ import {
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { LocationStatus, Prisma } from '@prisma/client';
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 
 @Injectable()
 export class ClientLocationService {
@@ -79,32 +80,22 @@ export class ClientLocationService {
         } = pagination;
         const skip = (page - 1) * limit;
 
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.companyId && { companyId: filter.companyId }),
-            ...(filter?.locationCode && { locationCode: filter.locationCode }),
-            ...(search && {
-                OR: [
-                    {
-                        locationName: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        locationCode: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        locationNo: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                ],
-            }),
+        const where: Prisma.ClientLocationWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                filter?.companyId ? { companyId: filter.companyId } : {},
+                buildMultiValueFilter('locationName', filter?.locationName),
+                buildMultiValueFilter('locationNo', filter?.locationNo),
+                buildMultiValueFilter('locationCode', filter?.locationCode),
+                buildMultiValueFilter('remark', filter?.remark),
+                search ? {
+                    OR: [
+                        { locationName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { locationCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { locationNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

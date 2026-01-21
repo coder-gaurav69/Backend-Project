@@ -22,6 +22,8 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { GroupStatus, Prisma } from '@prisma/client';
 
+import { buildMultiValueFilter } from '../common/utils/prisma-helper';
+
 @Injectable()
 export class GroupService {
     private readonly logger = new Logger(GroupService.name);
@@ -101,35 +103,24 @@ export class GroupService {
         } = pagination;
         const skip = (page - 1) * limit;
 
-        const where = {
-            ...(filter?.status && { status: filter.status }),
-            ...(filter?.clientGroupId && { clientGroupId: filter.clientGroupId }),
-            ...(filter?.companyId && { companyId: filter.companyId }),
-            ...(filter?.locationId && { locationId: filter.locationId }),
-            ...(filter?.subLocationId && { subLocationId: filter.subLocationId }),
-            ...(filter?.groupCode && { groupCode: filter.groupCode }),
-            ...(search && {
-                OR: [
-                    {
-                        groupName: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        groupCode: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                    {
-                        groupNo: {
-                            contains: search,
-                            mode: Prisma.QueryMode.insensitive,
-                        },
-                    },
-                ],
-            }),
+        const where: Prisma.GroupWhereInput = {
+            AND: [
+                filter?.status ? { status: filter.status } : {},
+                filter?.clientGroupId ? { clientGroupId: filter.clientGroupId } : {},
+                filter?.companyId ? { companyId: filter.companyId } : {},
+                filter?.locationId ? { locationId: filter.locationId } : {},
+                filter?.subLocationId ? { subLocationId: filter.subLocationId } : {},
+                buildMultiValueFilter('groupName', filter?.groupName),
+                buildMultiValueFilter('groupNo', filter?.groupNo),
+                buildMultiValueFilter('groupCode', filter?.groupCode),
+                search ? {
+                    OR: [
+                        { groupName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { groupCode: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                        { groupNo: { contains: search, mode: Prisma.QueryMode.insensitive } },
+                    ]
+                } : {},
+            ].filter(condition => condition && Object.keys(condition).length > 0) as any
         };
 
         const [data, total] = await Promise.all([

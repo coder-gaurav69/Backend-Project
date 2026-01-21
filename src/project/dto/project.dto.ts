@@ -96,4 +96,28 @@ export class FilterProjectDto {
     @IsOptional()
     @IsUUID()
     subLocationId?: string;
+
+    @IsOptional()
+    @IsUUID()
+    locationId?: string;
+
+    @IsOptional()
+    @IsUUID()
+    companyId?: string;
+
+    @IsOptional()
+    @IsUUID()
+    clientGroupId?: string;
+
+    @IsOptional()
+    @IsString()
+    projectName?: string;
+
+    @IsOptional()
+    @IsString()
+    projectNo?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

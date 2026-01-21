@@ -95,5 +95,17 @@ export class FilterClientLocationDto {
 
     @IsOptional()
     @IsString()
+    locationName?: string;
+
+    @IsOptional()
+    @IsString()
+    locationNo?: string;
+
+    @IsOptional()
+    @IsString()
     locationCode?: string;
+
+    @IsOptional()
+    @IsString()
+    remark?: string;
 }

@@ -123,5 +123,13 @@ export class FilterGroupDto {
 
     @IsOptional()
     @IsString()
+    groupName?: string;
+
+    @IsOptional()
+    @IsString()
+    groupNo?: string;
+
+    @IsOptional()
+    @IsString()
     groupCode?: string;
 }
