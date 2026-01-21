@@ -193,44 +193,46 @@ export class ClientGroupService {
     }
 
     async bulkCreate(dto: BulkCreateClientGroupDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.clientGroups.length} records`);
+
         const errors: any[] = [];
 
-        // 1. Fetch ALL existing group codes and nos from DB to prevent collisions in-memory
+        // 1. Fetch current max for uniqueness
         const allExisting = await this.prisma.clientGroup.findMany({
             select: { groupCode: true, groupNo: true }
         });
-
         const existingCodes = new Set(allExisting.map(x => x.groupCode));
         const existingNos = new Set(allExisting.map(x => x.groupNo));
 
         const prefix = this.configService.get('CG_NUMBER_PREFIX', 'CG-');
-        let currentNum = parseInt((await this.autoNumberService.generateClientGroupNo()).replace(prefix, ''));
+        const startNo = await this.autoNumberService.generateClientGroupNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
 
-        // 2. Process each record individually. 
-        // We avoid $transaction here so that one failure doesn't kill the whole 50-record batch.
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
+
+        // 2. Pre-process and validate in memory
         for (const clientGroupDto of dto.clientGroups) {
             try {
-                // Ensure groupName is not completely empty
                 const groupName = clientGroupDto.groupName?.trim() || clientGroupDto.groupCode || 'Unnamed Group';
 
-                // --- UNIQUE CODE LOGIC ---
-                let finalGroupCode = clientGroupDto.groupCode?.trim() || `GC-${Date.now()}`;
-                const originalCode = finalGroupCode;
-                let cSuffix = 1;
-                while (existingCodes.has(finalGroupCode)) {
-                    finalGroupCode = `${originalCode}-${cSuffix}`;
-                    cSuffix++;
+                // Unique Code Logic
+                let finalGroupCode = clientGroupDto.groupCode?.trim() || `GC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                if (existingCodes.has(finalGroupCode)) {
+                    let suffix = 1;
+                    const originalCode = finalGroupCode;
+                    while (existingCodes.has(`${originalCode}-${suffix}`)) {
+                        suffix++;
+                    }
+                    finalGroupCode = `${originalCode}-${suffix}`;
                 }
                 existingCodes.add(finalGroupCode);
 
-                // --- UNIQUE NUMBER LOGIC ---
+                // Unique Number Logic
                 let finalGroupNo = clientGroupDto.groupNo?.trim();
-                // If groupNo is missing, or is a plain number like "1", or already exists in DB/batch
-                if (!finalGroupNo || !finalGroupNo.includes(prefix) || existingNos.has(finalGroupNo)) {
+                if (!finalGroupNo || existingNos.has(finalGroupNo)) {
                     finalGroupNo = `${prefix}${currentNum}`;
                     currentNum++;
-                    // Extremely safe backup check
                     while (existingNos.has(finalGroupNo)) {
                         finalGroupNo = `${prefix}${currentNum}`;
                         currentNum++;
@@ -238,37 +240,45 @@ export class ClientGroupService {
                 }
                 existingNos.add(finalGroupNo);
 
-                // 3. Create record
-                const created = await this.prisma.clientGroup.create({
-                    data: {
-                        ...clientGroupDto,
-                        groupName,
-                        groupCode: finalGroupCode,
-                        groupNo: finalGroupNo,
-                        status: clientGroupDto.status || ClientGroupStatus.ACTIVE,
-                        createdBy: userId,
-                    },
+                dataToInsert.push({
+                    ...clientGroupDto,
+                    groupName,
+                    groupCode: finalGroupCode,
+                    groupNo: finalGroupNo,
+                    status: clientGroupDto.status || ClientGroupStatus.ACTIVE,
+                    createdBy: userId,
                 });
-                results.push(created);
-                this.logger.debug(`[BULK_CREATE_SUCCESS] Created: ${finalGroupCode} as ${finalGroupNo}`);
-
-            } catch (error) {
-                this.logger.error(`[BULK_CREATE_ROW_ERROR] Code: ${clientGroupDto.groupCode} | Error: ${error.message}`);
-                errors.push({
-                    groupCode: clientGroupDto.groupCode,
-                    error: error.message
-                });
+            } catch (err) {
+                errors.push({ groupCode: clientGroupDto.groupCode, error: err.message });
             }
         }
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Total: ${dto.clientGroups.length} | Success: ${results.length} | Failed: ${errors.length}`);
+        // 3. Batched Inserts using createMany
+        const chunks: any[][] = [];
+        for (let i = 0; i < dataToInsert.length; i += BATCH_SIZE) {
+            chunks.push(dataToInsert.slice(i, i + BATCH_SIZE));
+        }
+
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.clientGroup.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.clientGroups.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
 
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }

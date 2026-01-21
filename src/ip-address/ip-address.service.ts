@@ -256,58 +256,69 @@ export class IpAddressService {
     }
 
     async bulkCreate(dto: BulkCreateIpAddressDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.ipAddresses.length} records`);
         const errors: any[] = [];
 
         const allExisting = await this.prisma.ipAddress.findMany({
             select: { ipNo: true },
         });
-
         const existingNos = new Set(allExisting.map((x) => x.ipNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateIpNo()).replace('I-', ''),
-        );
+        const prefix = 'I-';
+        const startNo = await this.autoNumberService.generateIpNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
+
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
 
         for (const ipAddressDto of dto.ipAddresses) {
             try {
                 const ipAddressName = ipAddressDto.ipAddressName?.trim() || ipAddressDto.ipAddress || 'Unnamed IP';
 
+                // Unique number logic
                 let finalIpNo = ipAddressDto.ipNo?.trim();
-                if (!finalIpNo || !finalIpNo.includes('I-') || existingNos.has(finalIpNo)) {
-                    finalIpNo = `I-${currentNum}`;
+                if (!finalIpNo || existingNos.has(finalIpNo)) {
+                    finalIpNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalIpNo)) {
-                        finalIpNo = `I-${currentNum}`;
+                        finalIpNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalIpNo);
 
-                const created = await this.prisma.ipAddress.create({
-                    data: {
-                        ...ipAddressDto,
-                        ipAddressName,
-                        ipNo: finalIpNo,
-                        status: ipAddressDto.status || IpAddressStatus.ACTIVE,
-                        createdBy: userId,
-                    },
+                dataToInsert.push({
+                    ...ipAddressDto,
+                    ipAddressName,
+                    ipNo: finalIpNo,
+                    status: ipAddressDto.status || IpAddressStatus.ACTIVE,
+                    createdBy: userId,
                 });
-                results.push(created);
-            } catch (error) {
-                errors.push({
-                    ipAddress: ipAddressDto.ipAddress,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ ipAddress: ipAddressDto.ipAddress, error: err.message });
             }
         }
 
+        const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.ipAddress.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.ipAddresses.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -411,76 +422,46 @@ export class IpAddressService {
             );
         }
 
-        // Validate enums and resolve names to IDs
+        // 1. Resolve all relation names in batches
+        const clientGroupNames = Array.from(new Set(data.filter(r => (r as any).clientGroupName).map(r => (r as any).clientGroupName)));
+        const companyNames = Array.from(new Set(data.filter(r => (r as any).companyName).map(r => (r as any).companyName)));
+        const locationNames = Array.from(new Set(data.filter(r => (r as any).locationName).map(r => (r as any).locationName)));
+        const subLocationNames = Array.from(new Set(data.filter(r => (r as any).subLocationName).map(r => (r as any).subLocationName)));
+
+        const [dbClientGroups, dbCompanies, dbLocations, dbSubLocations] = await Promise.all([
+            this.prisma.clientGroup.findMany({ where: { groupName: { in: clientGroupNames } }, select: { id: true, groupName: true } }),
+            this.prisma.clientCompany.findMany({ where: { companyName: { in: companyNames } }, select: { id: true, companyName: true } }),
+            this.prisma.clientLocation.findMany({ where: { locationName: { in: locationNames } }, select: { id: true, locationName: true } }),
+            this.prisma.subLocation.findMany({ where: { subLocationName: { in: subLocationNames } }, select: { id: true, subLocationName: true } }),
+        ]);
+
+        const clientGroupMap = new Map(dbClientGroups.map(g => [g.groupName.toLowerCase(), g.id]));
+        const companyMap = new Map(dbCompanies.map(c => [c.companyName.toLowerCase(), c.id]));
+        const locationMap = new Map(dbLocations.map(l => [l.locationName.toLowerCase(), l.id]));
+        const subLocationMap = new Map(dbSubLocations.map(s => [s.subLocationName.toLowerCase(), s.id]));
+
+        // 2. Build processing data
         const processedData: CreateIpAddressDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(
-                    row.status as string,
-                    IpAddressStatus,
-                    'Status',
-                );
-            }
-
-            // Resolve clientGroupName to clientGroupId
-            let clientGroupId: string | undefined = undefined;
-            if ((row as any).clientGroupName) {
-                const group = await this.prisma.clientGroup.findFirst({
-                    where: { groupName: (row as any).clientGroupName },
-                });
-                if (!group) {
-                    throw new BadRequestException(`Client Group not found: ${(row as any).clientGroupName}`);
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, IpAddressStatus, 'Status');
                 }
-                clientGroupId = group.id;
-            }
 
-            // Resolve companyName to companyId
-            let companyId: string | undefined = undefined;
-            if ((row as any).companyName) {
-                const company = await this.prisma.clientCompany.findFirst({
-                    where: { companyName: (row as any).companyName },
+                processedData.push({
+                    ipNo: (row as any).ipNo,
+                    ipAddress: (row as any).ipAddress,
+                    ipAddressName: (row as any).ipAddressName,
+                    clientGroupId: (row as any).clientGroupName ? clientGroupMap.get((row as any).clientGroupName.toLowerCase()) : undefined,
+                    companyId: (row as any).companyName ? companyMap.get((row as any).companyName.toLowerCase()) : undefined,
+                    locationId: (row as any).locationName ? locationMap.get((row as any).locationName.toLowerCase()) : undefined,
+                    subLocationId: (row as any).subLocationName ? subLocationMap.get((row as any).subLocationName.toLowerCase()) : undefined,
+                    status: (row as any).status as IpAddressStatus,
+                    remark: (row as any).remark,
                 });
-                if (!company) {
-                    throw new BadRequestException(`Client Company not found: ${(row as any).companyName}`);
-                }
-                companyId = company.id;
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            // Resolve locationName to locationId
-            let locationId: string | undefined = undefined;
-            if ((row as any).locationName) {
-                const location = await this.prisma.clientLocation.findFirst({
-                    where: { locationName: (row as any).locationName },
-                });
-                if (!location) {
-                    throw new BadRequestException(`Client Location not found: ${(row as any).locationName}`);
-                }
-                locationId = location.id;
-            }
-
-            // Resolve subLocationName to subLocationId
-            let subLocationId: string | undefined = undefined;
-            if ((row as any).subLocationName) {
-                const subLocation = await this.prisma.subLocation.findFirst({
-                    where: { subLocationName: (row as any).subLocationName },
-                });
-                if (!subLocation) {
-                    throw new BadRequestException(`Sub Location not found: ${(row as any).subLocationName}`);
-                }
-                subLocationId = subLocation.id;
-            }
-
-            processedData.push({
-                ipNo: (row as any).ipNo,
-                ipAddress: (row as any).ipAddress,
-                ipAddressName: (row as any).ipAddressName,
-                clientGroupId,
-                companyId,
-                locationId,
-                subLocationId,
-                status: (row as any).status,
-                remark: (row as any).remark,
-            });
         }
 
         const result = await this.bulkCreate({ ipAddresses: processedData }, userId);

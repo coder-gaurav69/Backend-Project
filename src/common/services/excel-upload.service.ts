@@ -184,10 +184,18 @@ export class ExcelUploadService {
     }
 
     /**
+     * Chunk an array into smaller pieces for batch processing
+     */
+    chunk<T>(array: T[], size: number): T[][] {
+        const chunks: T[][] = [];
+        for (let i = 0; i < array.length; i += size) {
+            chunks.push(array.slice(i, i + size));
+        }
+        return chunks;
+    }
+
+    /**
      * Validate enum value
-     * @param value - Value to validate
-     * @param enumObj - Enum object
-     * @param fieldName - Field name for error message
      */
     validateEnum(value: string, enumObj: any, fieldName: string): void {
         const validValues = Object.values(enumObj);

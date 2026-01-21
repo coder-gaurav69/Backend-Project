@@ -239,86 +239,83 @@ export class SubLocationService {
     }
 
     async bulkCreate(dto: BulkCreateSubLocationDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.subLocations.length} records`);
         const errors: any[] = [];
 
         const allExisting = await this.prisma.subLocation.findMany({
             select: { subLocationCode: true, subLocationNo: true },
         });
-
         const existingCodes = new Set(allExisting.map((x) => x.subLocationCode));
         const existingNos = new Set(allExisting.map((x) => x.subLocationNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateSubLocationNo()).replace('CS-', ''),
-        );
+        const prefix = 'CS-';
+        const startNo = await this.autoNumberService.generateSubLocationNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
+
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
 
         for (const subLocationDto of dto.subLocations) {
             try {
-                const subLocationName =
-                    subLocationDto.subLocationName?.trim() ||
-                    subLocationDto.subLocationCode ||
-                    'Unnamed Sub Location';
+                const subLocationName = subLocationDto.subLocationName?.trim() || subLocationDto.subLocationCode || 'Unnamed Sub Location';
 
-                let finalSubLocationCode =
-                    subLocationDto.subLocationCode?.trim() || `SUBLOC-${Date.now()}`;
-                const originalCode = finalSubLocationCode;
-                let cSuffix = 1;
-                while (existingCodes.has(finalSubLocationCode)) {
-                    finalSubLocationCode = `${originalCode}-${cSuffix}`;
-                    cSuffix++;
+                // Unique code logic
+                let finalSubLocationCode = subLocationDto.subLocationCode?.trim() || `SUBLOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                if (existingCodes.has(finalSubLocationCode)) {
+                    let suffix = 1;
+                    const originalCode = finalSubLocationCode;
+                    while (existingCodes.has(`${originalCode}-${suffix}`)) {
+                        suffix++;
+                    }
+                    finalSubLocationCode = `${originalCode}-${suffix}`;
                 }
                 existingCodes.add(finalSubLocationCode);
 
+                // Unique number logic
                 let finalSubLocationNo = subLocationDto.subLocationNo?.trim();
-                if (
-                    !finalSubLocationNo ||
-                    !finalSubLocationNo.includes('CS-') ||
-                    existingNos.has(finalSubLocationNo)
-                ) {
-                    finalSubLocationNo = `CS-${currentNum}`;
+                if (!finalSubLocationNo || existingNos.has(finalSubLocationNo)) {
+                    finalSubLocationNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalSubLocationNo)) {
-                        finalSubLocationNo = `CS-${currentNum}`;
+                        finalSubLocationNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalSubLocationNo);
 
-                const location = await this.prisma.clientLocation.findFirst({
-                    where: { id: subLocationDto.locationId },
+                dataToInsert.push({
+                    ...subLocationDto,
+                    subLocationName,
+                    subLocationCode: finalSubLocationCode,
+                    subLocationNo: finalSubLocationNo,
+                    status: subLocationDto.status || SubLocationStatus.ACTIVE,
+                    createdBy: userId,
                 });
-
-                if (!location) {
-                    throw new Error('Client location not found');
-                }
-
-                const created = await this.prisma.subLocation.create({
-                    data: {
-                        ...subLocationDto,
-                        companyId: subLocationDto.companyId || location.companyId,
-                        subLocationName,
-                        subLocationCode: finalSubLocationCode,
-                        subLocationNo: finalSubLocationNo,
-                        status: subLocationDto.status || SubLocationStatus.ACTIVE,
-                        createdBy: userId,
-                    },
-                });
-                results.push(created);
-            } catch (error) {
-                errors.push({
-                    subLocationCode: subLocationDto.subLocationCode,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ subLocationCode: subLocationDto.subLocationCode, error: err.message });
             }
         }
 
+        const chunks = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.subLocation.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.subLocations.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -421,54 +418,49 @@ export class SubLocationService {
             );
         }
 
-        // Validate status enum and resolve locationName to locationId
+        // 1. Resolve all companyNames to companyIds
+        const companyNames = Array.from(new Set(data.filter(row => row.companyName).map(row => row.companyName)));
+        const companies = await this.prisma.clientCompany.findMany({
+            where: { companyName: { in: companyNames } },
+            select: { id: true, companyName: true }
+        });
+        const companyMap = new Map(companies.map(c => [c.companyName.toLowerCase(), c.id]));
+
+        // 2. Resolve all locationNames to locationIds (grouped by company)
+        const locationNames = Array.from(new Set(data.filter(row => row.locationName).map(row => row.locationName)));
+        const locations = await this.prisma.clientLocation.findMany({
+            where: { locationName: { in: locationNames } },
+            select: { id: true, locationName: true, companyId: true }
+        });
+        const locationMap = new Map(locations.map(l => [`${l.companyId}_${l.locationName.toLowerCase()}`, l.id]));
+
+        // 3. Build processing data
         const processedData: CreateSubLocationDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(
-                    row.status as string,
-                    SubLocationStatus,
-                    'Status',
-                );
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, SubLocationStatus, 'Status');
+                }
+
+                const companyId = companyMap.get(row.companyName?.toLowerCase());
+                if (!companyId) continue;
+
+                const locationId = locationMap.get(`${companyId}_${row.locationName?.toLowerCase()}`);
+                if (!locationId) continue;
+
+                processedData.push({
+                    subLocationNo: row.subLocationNo,
+                    subLocationName: row.subLocationName,
+                    subLocationCode: row.subLocationCode,
+                    companyId: companyId,
+                    locationId: locationId,
+                    address: row.address,
+                    status: row.status as SubLocationStatus,
+                    remark: row.remark,
+                });
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            // Find companyId from companyName
-            const company = await this.prisma.clientCompany.findFirst({
-                where: {
-                    companyName: row.companyName,
-                },
-            });
-
-            if (!company) {
-                throw new BadRequestException(
-                    `Client Company not found: ${row.companyName}`,
-                );
-            }
-
-            // Find locationId from locationName AND companyId
-            const location = await this.prisma.clientLocation.findFirst({
-                where: {
-                    locationName: row.locationName,
-                    companyId: company.id,
-                },
-            });
-
-            if (!location) {
-                throw new BadRequestException(
-                    `Client Location "${row.locationName}" not found under Company "${row.companyName}"`,
-                );
-            }
-
-            processedData.push({
-                subLocationNo: row.subLocationNo,
-                subLocationName: row.subLocationName,
-                subLocationCode: row.subLocationCode,
-                companyId: company.id,
-                locationId: location.id,
-                address: row.address,
-                status: row.status,
-                remark: row.remark,
-            });
         }
 
         const result = await this.bulkCreate({ subLocations: processedData }, userId);

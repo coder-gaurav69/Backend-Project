@@ -277,71 +277,83 @@ export class GroupService {
     }
 
     async bulkCreate(dto: BulkCreateGroupDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.groups.length} records`);
         const errors: any[] = [];
 
         const allExisting = await this.prisma.group.findMany({
             select: { groupCode: true, groupNo: true },
         });
-
         const existingCodes = new Set(allExisting.map((x) => x.groupCode));
         const existingNos = new Set(allExisting.map((x) => x.groupNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateGroupNo()).replace('G-', ''),
-        );
+        const prefix = 'G-';
+        const startNo = await this.autoNumberService.generateGroupNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
+
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
 
         for (const groupDto of dto.groups) {
             try {
                 const groupName = groupDto.groupName?.trim() || groupDto.groupCode || 'Unnamed Group';
 
                 // Unique code logic
-                let finalGroupCode = groupDto.groupCode?.trim() || `GRP-${Date.now()}`;
-                const originalCode = finalGroupCode;
-                let cSuffix = 1;
-                while (existingCodes.has(finalGroupCode)) {
-                    finalGroupCode = `${originalCode}-${cSuffix}`;
-                    cSuffix++;
+                let finalGroupCode = groupDto.groupCode?.trim() || `GRP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                if (existingCodes.has(finalGroupCode)) {
+                    let suffix = 1;
+                    const originalCode = finalGroupCode;
+                    while (existingCodes.has(`${originalCode}-${suffix}`)) {
+                        suffix++;
+                    }
+                    finalGroupCode = `${originalCode}-${suffix}`;
                 }
                 existingCodes.add(finalGroupCode);
 
                 // Unique number logic
                 let finalGroupNo = groupDto.groupNo?.trim();
-                if (!finalGroupNo || !finalGroupNo.includes('G-') || existingNos.has(finalGroupNo)) {
-                    finalGroupNo = `G-${currentNum}`;
+                if (!finalGroupNo || existingNos.has(finalGroupNo)) {
+                    finalGroupNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalGroupNo)) {
-                        finalGroupNo = `G-${currentNum}`;
+                        finalGroupNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalGroupNo);
 
-                const created = await this.prisma.group.create({
-                    data: {
-                        ...groupDto,
-                        groupName,
-                        groupCode: finalGroupCode,
-                        groupNo: finalGroupNo,
-                        status: groupDto.status || GroupStatus.ACTIVE,
-                        createdBy: userId,
-                    },
+                dataToInsert.push({
+                    ...groupDto,
+                    groupName,
+                    groupCode: finalGroupCode,
+                    groupNo: finalGroupNo,
+                    status: groupDto.status || GroupStatus.ACTIVE,
+                    createdBy: userId,
                 });
-                results.push(created);
-            } catch (error) {
-                errors.push({
-                    groupCode: groupDto.groupCode,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ groupCode: groupDto.groupCode, error: err.message });
             }
         }
 
+        const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.group.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.groups.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -445,72 +457,46 @@ export class GroupService {
             );
         }
 
-        // Validate enums and resolve names to IDs
+        // 1. Resolve all relation names in batches
+        const clientGroupNames = Array.from(new Set(data.filter(r => (r as any).clientGroupName).map(r => (r as any).clientGroupName)));
+        const companyNames = Array.from(new Set(data.filter(r => (r as any).companyName).map(r => (r as any).companyName)));
+        const locationNames = Array.from(new Set(data.filter(r => (r as any).locationName).map(r => (r as any).locationName)));
+        const subLocationNames = Array.from(new Set(data.filter(r => (r as any).subLocationName).map(r => (r as any).subLocationName)));
+
+        const [dbClientGroups, dbCompanies, dbLocations, dbSubLocations] = await Promise.all([
+            this.prisma.clientGroup.findMany({ where: { groupName: { in: clientGroupNames } }, select: { id: true, groupName: true } }),
+            this.prisma.clientCompany.findMany({ where: { companyName: { in: companyNames } }, select: { id: true, companyName: true } }),
+            this.prisma.clientLocation.findMany({ where: { locationName: { in: locationNames } }, select: { id: true, locationName: true } }),
+            this.prisma.subLocation.findMany({ where: { subLocationName: { in: subLocationNames } }, select: { id: true, subLocationName: true } }),
+        ]);
+
+        const clientGroupMap = new Map(dbClientGroups.map(g => [g.groupName.toLowerCase(), g.id]));
+        const companyMap = new Map(dbCompanies.map(c => [c.companyName.toLowerCase(), c.id]));
+        const locationMap = new Map(dbLocations.map(l => [l.locationName.toLowerCase(), l.id]));
+        const subLocationMap = new Map(dbSubLocations.map(s => [s.subLocationName.toLowerCase(), s.id]));
+
+        // 2. Build processing data
         const processedData: CreateGroupDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(row.status as string, GroupStatus, 'Status');
-            }
-
-            // Resolve clientGroupName to clientGroupId
-            let clientGroupId: string | undefined = undefined;
-            if ((row as any).clientGroupName) {
-                const group = await this.prisma.clientGroup.findFirst({
-                    where: { groupName: (row as any).clientGroupName },
-                });
-                if (!group) {
-                    throw new BadRequestException(`Client Group not found: ${(row as any).clientGroupName}`);
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, GroupStatus, 'Status');
                 }
-                clientGroupId = group.id;
-            }
 
-            // Resolve companyName to companyId
-            let companyId: string | undefined = undefined;
-            if ((row as any).companyName) {
-                const company = await this.prisma.clientCompany.findFirst({
-                    where: { companyName: (row as any).companyName },
+                processedData.push({
+                    groupNo: (row as any).groupNo,
+                    groupName: (row as any).groupName,
+                    groupCode: (row as any).groupCode,
+                    clientGroupId: (row as any).clientGroupName ? clientGroupMap.get((row as any).clientGroupName.toLowerCase()) : undefined,
+                    companyId: (row as any).companyName ? companyMap.get((row as any).companyName.toLowerCase()) : undefined,
+                    locationId: (row as any).locationName ? locationMap.get((row as any).locationName.toLowerCase()) : undefined,
+                    subLocationId: (row as any).subLocationName ? subLocationMap.get((row as any).subLocationName.toLowerCase()) : undefined,
+                    status: (row as any).status as GroupStatus,
+                    remark: (row as any).remark,
                 });
-                if (!company) {
-                    throw new BadRequestException(`Client Company not found: ${(row as any).companyName}`);
-                }
-                companyId = company.id;
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            // Resolve locationName to locationId
-            let locationId: string | undefined = undefined;
-            if ((row as any).locationName) {
-                const location = await this.prisma.clientLocation.findFirst({
-                    where: { locationName: (row as any).locationName },
-                });
-                if (!location) {
-                    throw new BadRequestException(`Client Location not found: ${(row as any).locationName}`);
-                }
-                locationId = location.id;
-            }
-
-            // Resolve subLocationName to subLocationId
-            let subLocationId: string | undefined = undefined;
-            if ((row as any).subLocationName) {
-                const subLocation = await this.prisma.subLocation.findFirst({
-                    where: { subLocationName: (row as any).subLocationName },
-                });
-                if (!subLocation) {
-                    throw new BadRequestException(`Sub Location not found: ${(row as any).subLocationName}`);
-                }
-                subLocationId = subLocation.id;
-            }
-
-            processedData.push({
-                groupNo: (row as any).groupNo,
-                groupName: (row as any).groupName,
-                groupCode: (row as any).groupCode,
-                clientGroupId,
-                companyId,
-                locationId,
-                subLocationId,
-                status: (row as any).status,
-                remark: (row as any).remark,
-            });
         }
 
         const result = await this.bulkCreate({ groups: processedData }, userId);

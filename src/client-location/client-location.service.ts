@@ -224,85 +224,83 @@ export class ClientLocationService {
     }
 
     async bulkCreate(dto: BulkCreateClientLocationDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.locations.length} records`);
         const errors: any[] = [];
 
         const allExisting = await this.prisma.clientLocation.findMany({
             select: { locationCode: true, locationNo: true },
         });
-
         const existingCodes = new Set(allExisting.map((x) => x.locationCode));
         const existingNos = new Set(allExisting.map((x) => x.locationNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateLocationNo()).replace('CL-', ''),
-        );
+        const prefix = 'CL-';
+        const startNo = await this.autoNumberService.generateLocationNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
+
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
 
         for (const locationDto of dto.locations) {
             try {
-                const locationName =
-                    locationDto.locationName?.trim() ||
-                    locationDto.locationCode ||
-                    'Unnamed Location';
+                const locationName = locationDto.locationName?.trim() || locationDto.locationCode || 'Unnamed Location';
 
-                let finalLocationCode =
-                    locationDto.locationCode?.trim() || `LOC-${Date.now()}`;
-                const originalCode = finalLocationCode;
-                let cSuffix = 1;
-                while (existingCodes.has(finalLocationCode)) {
-                    finalLocationCode = `${originalCode}-${cSuffix}`;
-                    cSuffix++;
+                // Unique code logic
+                let finalLocationCode = locationDto.locationCode?.trim() || `LOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                if (existingCodes.has(finalLocationCode)) {
+                    let suffix = 1;
+                    const originalCode = finalLocationCode;
+                    while (existingCodes.has(`${originalCode}-${suffix}`)) {
+                        suffix++;
+                    }
+                    finalLocationCode = `${originalCode}-${suffix}`;
                 }
                 existingCodes.add(finalLocationCode);
 
+                // Unique number logic
                 let finalLocationNo = locationDto.locationNo?.trim();
-                if (
-                    !finalLocationNo ||
-                    !finalLocationNo.includes('CL-') ||
-                    existingNos.has(finalLocationNo)
-                ) {
-                    finalLocationNo = `CL-${currentNum}`;
+                if (!finalLocationNo || existingNos.has(finalLocationNo)) {
+                    finalLocationNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalLocationNo)) {
-                        finalLocationNo = `CL-${currentNum}`;
+                        finalLocationNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalLocationNo);
 
-                const company = await this.prisma.clientCompany.findFirst({
-                    where: { id: locationDto.companyId },
+                dataToInsert.push({
+                    ...locationDto,
+                    locationName,
+                    locationCode: finalLocationCode,
+                    locationNo: finalLocationNo,
+                    status: locationDto.status || LocationStatus.ACTIVE,
+                    createdBy: userId,
                 });
-
-                if (!company) {
-                    throw new Error('Client company not found');
-                }
-
-                const created = await this.prisma.clientLocation.create({
-                    data: {
-                        ...locationDto,
-                        locationName,
-                        locationCode: finalLocationCode,
-                        locationNo: finalLocationNo,
-                        status: locationDto.status || LocationStatus.ACTIVE,
-                        createdBy: userId,
-                    },
-                });
-                results.push(created);
-            } catch (error) {
-                errors.push({
-                    locationCode: locationDto.locationCode,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ locationCode: locationDto.locationCode, error: err.message });
             }
         }
 
+        const chunks = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.clientLocation.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.locations.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -404,39 +402,40 @@ export class ClientLocationService {
             );
         }
 
-        // Validate status enum and resolve companyName to companyId
+        // 1. Resolve all companyNames to companyIds in one go
+        const companyNames = Array.from(new Set(data.filter(row => row.companyName).map(row => row.companyName)));
+        const companies = await this.prisma.clientCompany.findMany({
+            where: { companyName: { in: companyNames } },
+            select: { id: true, companyName: true }
+        });
+        const companyMap = new Map(companies.map(c => [c.companyName.toLowerCase(), c.id]));
+
+        // 2. Build processing data
         const processedData: CreateClientLocationDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(
-                    row.status as string,
-                    LocationStatus,
-                    'Status',
-                );
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, LocationStatus, 'Status');
+                }
+
+                const companyId = companyMap.get(row.companyName?.toLowerCase());
+                if (!companyId) {
+                    this.logger.warn(`[UPLOAD_WARN] Skipping row: Client Company not found: ${row.companyName}`);
+                    continue;
+                }
+
+                processedData.push({
+                    locationNo: row.locationNo,
+                    locationName: row.locationName,
+                    locationCode: row.locationCode,
+                    companyId: companyId,
+                    address: row.address,
+                    status: row.status as LocationStatus,
+                    remark: row.remark,
+                });
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            // Find companyId from companyName
-            const company = await this.prisma.clientCompany.findFirst({
-                where: {
-                    companyName: row.companyName,
-                },
-            });
-
-            if (!company) {
-                throw new BadRequestException(
-                    `Client Company not found: ${row.companyName}`,
-                );
-            }
-
-            processedData.push({
-                locationNo: row.locationNo,
-                locationName: row.locationName,
-                locationCode: row.locationCode,
-                companyId: company.id, // Use the resolved companyId
-                address: row.address,
-                status: row.status,
-                remark: row.remark,
-            });
         }
 
         const result = await this.bulkCreate({ locations: processedData }, userId);

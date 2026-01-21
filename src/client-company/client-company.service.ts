@@ -245,99 +245,86 @@ export class ClientCompanyService {
     }
 
     async bulkCreate(dto: BulkCreateClientCompanyDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.companies.length} records`);
         const errors: any[] = [];
 
-        // Fetch all existing company codes and nos
+        // 1. Fetch current data for uniqueness
         const allExisting = await this.prisma.clientCompany.findMany({
             select: { companyCode: true, companyNo: true },
         });
-
         const existingCodes = new Set(allExisting.map((x) => x.companyCode));
         const existingNos = new Set(allExisting.map((x) => x.companyNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateCompanyNo()).replace('CC-', ''),
-        );
+        const prefix = 'CC-';
+        const startNo = await this.autoNumberService.generateCompanyNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
 
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
+
+        // 2. Pre-process in memory
         for (const companyDto of dto.companies) {
             try {
-                const companyName =
-                    companyDto.companyName?.trim() ||
-                    companyDto.companyCode ||
-                    'Unnamed Company';
+                const companyName = companyDto.companyName?.trim() || companyDto.companyCode || 'Unnamed Company';
 
                 // Unique code logic
-                let finalCompanyCode =
-                    companyDto.companyCode?.trim() || `COMP-${Date.now()}`;
-                const originalCode = finalCompanyCode;
-                let cSuffix = 1;
-                while (existingCodes.has(finalCompanyCode)) {
-                    finalCompanyCode = `${originalCode}-${cSuffix}`;
-                    cSuffix++;
+                let finalCompanyCode = companyDto.companyCode?.trim() || `COMP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                if (existingCodes.has(finalCompanyCode)) {
+                    let suffix = 1;
+                    const originalCode = finalCompanyCode;
+                    while (existingCodes.has(`${originalCode}-${suffix}`)) {
+                        suffix++;
+                    }
+                    finalCompanyCode = `${originalCode}-${suffix}`;
                 }
                 existingCodes.add(finalCompanyCode);
 
                 // Unique number logic
                 let finalCompanyNo = companyDto.companyNo?.trim();
-                if (
-                    !finalCompanyNo ||
-                    !finalCompanyNo.includes('CC-') ||
-                    existingNos.has(finalCompanyNo)
-                ) {
-                    finalCompanyNo = `CC-${currentNum}`;
+                if (!finalCompanyNo || existingNos.has(finalCompanyNo)) {
+                    finalCompanyNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalCompanyNo)) {
-                        finalCompanyNo = `CC-${currentNum}`;
+                        finalCompanyNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalCompanyNo);
 
-                // Verify group exists
-                const group = await this.prisma.clientGroup.findFirst({
-                    where: { id: companyDto.groupId },
+                dataToInsert.push({
+                    ...companyDto,
+                    companyName,
+                    companyCode: finalCompanyCode,
+                    companyNo: finalCompanyNo,
+                    status: companyDto.status || CompanyStatus.ACTIVE,
+                    createdBy: userId,
                 });
-
-                if (!group) {
-                    throw new Error('Client group not found');
-                }
-
-                const created = await this.prisma.clientCompany.create({
-                    data: {
-                        ...companyDto,
-                        companyName,
-                        companyCode: finalCompanyCode,
-                        companyNo: finalCompanyNo,
-                        status: companyDto.status || CompanyStatus.ACTIVE,
-                        createdBy: userId,
-                    },
-                });
-                results.push(created);
-                this.logger.debug(
-                    `[BULK_CREATE_SUCCESS] Created: ${finalCompanyCode} as ${finalCompanyNo}`,
-                );
-            } catch (error) {
-                this.logger.error(
-                    `[BULK_CREATE_ROW_ERROR] Code: ${companyDto.companyCode} | Error: ${error.message}`,
-                );
-                errors.push({
-                    companyCode: companyDto.companyCode,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ companyCode: companyDto.companyCode, error: err.message });
             }
         }
 
-        this.logger.log(
-            `[BULK_CREATE_COMPLETED] Total: ${dto.companies.length} | Success: ${results.length} | Failed: ${errors.length}`,
-        );
+        // 3. Batched Inserts
+        const chunks = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.clientCompany.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
 
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.companies.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -444,39 +431,40 @@ export class ClientCompanyService {
             );
         }
 
-        // Validate status enum and resolve groupName to groupId
+        // 1. Resolve all groupNames to groupIds in one go to avoid N+1 queries
+        const groupNames = Array.from(new Set(data.filter(row => row.groupName).map(row => row.groupName)));
+        const groups = await this.prisma.clientGroup.findMany({
+            where: { groupName: { in: groupNames } },
+            select: { id: true, groupName: true }
+        });
+        const groupMap = new Map(groups.map(g => [g.groupName.toLowerCase(), g.id]));
+
+        // 2. Validate status and build processing data
         const processedData: CreateClientCompanyDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(
-                    row.status as string,
-                    CompanyStatus,
-                    'Status',
-                );
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, CompanyStatus, 'Status');
+                }
+
+                const groupId = groupMap.get(row.groupName?.toLowerCase());
+                if (!groupId) {
+                    this.logger.warn(`[UPLOAD_WARN] Skipping row: Client Group not found: ${row.groupName}`);
+                    continue;
+                }
+
+                processedData.push({
+                    companyNo: row.companyNo,
+                    companyName: row.companyName,
+                    companyCode: row.companyCode,
+                    groupId: groupId,
+                    address: row.address,
+                    status: row.status as CompanyStatus,
+                    remark: row.remark,
+                });
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            // Find groupId from groupName
-            const group = await this.prisma.clientGroup.findFirst({
-                where: {
-                    groupName: row.groupName,
-                },
-            });
-
-            if (!group) {
-                throw new BadRequestException(
-                    `Client Group not found: ${row.groupName}`,
-                );
-            }
-
-            processedData.push({
-                companyNo: row.companyNo,
-                companyName: row.companyName,
-                companyCode: row.companyCode,
-                groupId: group.id, // Use the resolved groupId
-                address: row.address,
-                status: row.status,
-                remark: row.remark,
-            });
         }
 
         const result = await this.bulkCreate({ companies: processedData }, userId);

@@ -257,60 +257,71 @@ export class TeamService {
     }
 
     async bulkCreate(dto: BulkCreateTeamDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.teams.length} records`);
         const errors: any[] = [];
 
         const allExisting = await this.prisma.team.findMany({
             select: { teamNo: true },
         });
-
         const existingNos = new Set(allExisting.map((x) => x.teamNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateTeamNo()).replace('U-', ''),
-        );
+        const prefix = 'U-';
+        const startNo = await this.autoNumberService.generateTeamNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
+
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
 
         for (const teamDto of dto.teams) {
             try {
                 const teamName = teamDto.teamName?.trim() || 'Unnamed Team';
 
+                // Unique number logic
                 let finalTeamNo = teamDto.teamNo?.trim();
-                if (!finalTeamNo || !finalTeamNo.includes('U-') || existingNos.has(finalTeamNo)) {
-                    finalTeamNo = `U-${currentNum}`;
+                if (!finalTeamNo || existingNos.has(finalTeamNo)) {
+                    finalTeamNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalTeamNo)) {
-                        finalTeamNo = `U-${currentNum}`;
+                        finalTeamNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalTeamNo);
 
-                const created = await this.prisma.team.create({
-                    data: {
-                        ...teamDto,
-                        teamName,
-                        teamNo: finalTeamNo,
-                        taskAssignPermission: teamDto.taskAssignPermission || false,
-                        loginMethod: teamDto.loginMethod || LoginMethod.EMAIL,
-                        status: teamDto.status || TeamStatus.ACTIVE,
-                        createdBy: userId,
-                    },
+                dataToInsert.push({
+                    ...teamDto,
+                    teamName,
+                    teamNo: finalTeamNo,
+                    taskAssignPermission: teamDto.taskAssignPermission || false,
+                    loginMethod: teamDto.loginMethod || LoginMethod.EMAIL,
+                    status: teamDto.status || TeamStatus.ACTIVE,
+                    createdBy: userId,
                 });
-                results.push(created);
-            } catch (error) {
-                errors.push({
-                    teamName: teamDto.teamName,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ teamName: teamDto.teamName, error: err.message });
             }
         }
 
+        const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.team.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.teams.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -417,82 +428,52 @@ export class TeamService {
             );
         }
 
-        // Validate enums and resolve names to IDs
+        // 1. Resolve all relation names in batches
+        const groupNames = Array.from(new Set(data.filter(r => r.groupName).map(r => r.groupName)));
+        const companyNames = Array.from(new Set(data.filter(r => r.companyName).map(r => r.companyName)));
+        const locationNames = Array.from(new Set(data.filter(r => r.locationName).map(r => r.locationName)));
+        const subLocationNames = Array.from(new Set(data.filter(r => r.subLocationName).map(r => r.subLocationName)));
+
+        const [dbGroups, dbCompanies, dbLocations, dbSubLocations] = await Promise.all([
+            this.prisma.clientGroup.findMany({ where: { groupName: { in: groupNames } }, select: { id: true, groupName: true } }),
+            this.prisma.clientCompany.findMany({ where: { companyName: { in: companyNames } }, select: { id: true, companyName: true } }),
+            this.prisma.clientLocation.findMany({ where: { locationName: { in: locationNames } }, select: { id: true, locationName: true } }),
+            this.prisma.subLocation.findMany({ where: { subLocationName: { in: subLocationNames } }, select: { id: true, subLocationName: true } }),
+        ]);
+
+        const groupMap = new Map(dbGroups.map(g => [g.groupName.toLowerCase(), g.id]));
+        const companyMap = new Map(dbCompanies.map(c => [c.companyName.toLowerCase(), c.id]));
+        const locationMap = new Map(dbLocations.map(l => [l.locationName.toLowerCase(), l.id]));
+        const subLocationMap = new Map(dbSubLocations.map(s => [s.subLocationName.toLowerCase(), s.id]));
+
+        // 2. Build processing data
         const processedData: CreateTeamDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(row.status as string, TeamStatus, 'Status');
-            }
-            if (row.loginMethod) {
-                this.excelUploadService.validateEnum(
-                    row.loginMethod as string,
-                    LoginMethod,
-                    'LoginMethod',
-                );
-            }
-
-            // Resolve groupName to clientGroupId
-            let clientGroupId: string | undefined = undefined;
-            if (row.groupName) {
-                const group = await this.prisma.clientGroup.findFirst({
-                    where: { groupName: row.groupName },
-                });
-                if (!group) {
-                    throw new BadRequestException(`Client Group not found: ${row.groupName}`);
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, TeamStatus, 'Status');
                 }
-                clientGroupId = group.id;
-            }
-
-            // Resolve companyName to companyId
-            let companyId: string | undefined = undefined;
-            if (row.companyName) {
-                const company = await this.prisma.clientCompany.findFirst({
-                    where: { companyName: row.companyName },
-                });
-                if (!company) {
-                    throw new BadRequestException(`Client Company not found: ${row.companyName}`);
+                if (row.loginMethod) {
+                    this.excelUploadService.validateEnum(row.loginMethod as string, LoginMethod, 'LoginMethod');
                 }
-                companyId = company.id;
-            }
 
-            // Resolve locationName to locationId
-            let locationId: string | undefined = undefined;
-            if (row.locationName) {
-                const location = await this.prisma.clientLocation.findFirst({
-                    where: { locationName: row.locationName },
+                processedData.push({
+                    teamNo: row.teamNo,
+                    teamName: row.teamName,
+                    email: row.email,
+                    phone: row.phone,
+                    taskAssignPermission: String(row.taskAssignPermission).toLowerCase() === 'true',
+                    clientGroupId: row.groupName ? groupMap.get(row.groupName.toLowerCase()) : undefined,
+                    companyId: row.companyName ? companyMap.get(row.companyName.toLowerCase()) : undefined,
+                    locationId: row.locationName ? locationMap.get(row.locationName.toLowerCase()) : undefined,
+                    subLocationId: row.subLocationName ? subLocationMap.get(row.subLocationName.toLowerCase()) : undefined,
+                    status: row.status as TeamStatus,
+                    loginMethod: row.loginMethod as LoginMethod,
+                    remark: row.remark,
                 });
-                if (!location) {
-                    throw new BadRequestException(`Client Location not found: ${row.locationName}`);
-                }
-                locationId = location.id;
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            // Resolve subLocationName to subLocationId
-            let subLocationId: string | undefined = undefined;
-            if (row.subLocationName) {
-                const subLocation = await this.prisma.subLocation.findFirst({
-                    where: { subLocationName: row.subLocationName },
-                });
-                if (!subLocation) {
-                    throw new BadRequestException(`Sub Location not found: ${row.subLocationName}`);
-                }
-                subLocationId = subLocation.id;
-            }
-
-            processedData.push({
-                teamNo: row.teamNo,
-                teamName: row.teamName,
-                email: row.email,
-                phone: row.phone,
-                taskAssignPermission: row.taskAssignPermission,
-                clientGroupId,
-                companyId,
-                locationId,
-                subLocationId,
-                status: row.status,
-                loginMethod: row.loginMethod,
-                remark: row.remark,
-            });
         }
 
         const result = await this.bulkCreate({ teams: processedData }, userId);

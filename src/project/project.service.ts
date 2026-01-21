@@ -232,72 +232,71 @@ export class ProjectService {
     }
 
     async bulkCreate(dto: BulkCreateProjectDto, userId: string) {
-        const results: any[] = [];
+        this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.projects.length} records`);
         const errors: any[] = [];
 
         const allExisting = await this.prisma.project.findMany({
             select: { projectNo: true },
         });
-
         const existingNos = new Set(allExisting.map((x) => x.projectNo));
 
-        let currentNum = parseInt(
-            (await this.autoNumberService.generateProjectNo()).replace('P-', ''),
-        );
+        const prefix = 'P-';
+        const startNo = await this.autoNumberService.generateProjectNo();
+        let currentNum = parseInt(startNo.replace(prefix, ''));
+
+        const BATCH_SIZE = 1000;
+        const dataToInsert: any[] = [];
 
         for (const projectDto of dto.projects) {
             try {
                 const projectName = projectDto.projectName?.trim() || 'Unnamed Project';
 
+                // Unique number logic
                 let finalProjectNo = projectDto.projectNo?.trim();
-                if (
-                    !finalProjectNo ||
-                    !finalProjectNo.includes('P-') ||
-                    existingNos.has(finalProjectNo)
-                ) {
-                    finalProjectNo = `P-${currentNum}`;
+                if (!finalProjectNo || existingNos.has(finalProjectNo)) {
+                    finalProjectNo = `${prefix}${currentNum}`;
                     currentNum++;
                     while (existingNos.has(finalProjectNo)) {
-                        finalProjectNo = `P-${currentNum}`;
+                        finalProjectNo = `${prefix}${currentNum}`;
                         currentNum++;
                     }
                 }
                 existingNos.add(finalProjectNo);
 
-                const subLocation = await this.prisma.subLocation.findFirst({
-                    where: { id: projectDto.subLocationId },
+                dataToInsert.push({
+                    ...projectDto,
+                    projectName,
+                    projectNo: finalProjectNo,
+                    deadline: projectDto.deadline ? new Date(projectDto.deadline) : null,
+                    priority: projectDto.priority || ProjectPriority.MEDIUM,
+                    status: projectDto.status || ProjectStatus.ACTIVE,
+                    createdBy: userId,
                 });
-
-                if (!subLocation) {
-                    throw new Error('Sub location not found');
-                }
-
-                const created = await this.prisma.project.create({
-                    data: {
-                        ...projectDto,
-                        projectName,
-                        projectNo: finalProjectNo,
-                        deadline: projectDto.deadline ? new Date(projectDto.deadline) : null,
-                        priority: projectDto.priority || ProjectPriority.MEDIUM,
-                        status: projectDto.status || ProjectStatus.ACTIVE,
-                        createdBy: userId,
-                    },
-                });
-                results.push(created);
-            } catch (error) {
-                errors.push({
-                    projectName: projectDto.projectName,
-                    error: error.message,
-                });
+            } catch (err) {
+                errors.push({ projectName: projectDto.projectName, error: err.message });
             }
         }
 
+        const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        for (const chunk of chunks) {
+            try {
+                await this.prisma.project.createMany({
+                    data: chunk,
+                    skipDuplicates: true,
+                });
+            } catch (err) {
+                this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
+                errors.push({ error: 'Batch insert failed', details: err.message });
+            }
+        }
+
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.projects.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: results.length,
+            success: dataToInsert.length,
             failed: errors.length,
-            results,
+            message: `Successfully processed ${dataToInsert.length} records.`,
             errors,
         };
     }
@@ -400,46 +399,40 @@ export class ProjectService {
             );
         }
 
-        // Validate enums and resolve subLocationName to subLocationId
+        // 1. Resolve all subLocationNames to subLocationIds
+        const subLocationNames = Array.from(new Set(data.filter(row => row.subLocationName).map(row => row.subLocationName)));
+        const subLocations = await this.prisma.subLocation.findMany({
+            where: { subLocationName: { in: subLocationNames } },
+            select: { id: true, subLocationName: true }
+        });
+        const subLocationMap = new Map(subLocations.map(s => [s.subLocationName.toLowerCase(), s.id]));
+
+        // 2. Build processing data
         const processedData: CreateProjectDto[] = [];
         for (const row of data) {
-            if (row.status) {
-                this.excelUploadService.validateEnum(
-                    row.status as string,
-                    ProjectStatus,
-                    'Status',
-                );
-            }
-            if (row.priority) {
-                this.excelUploadService.validateEnum(
-                    row.priority as string,
-                    ProjectPriority,
-                    'Priority',
-                );
-            }
+            try {
+                if (row.status) {
+                    this.excelUploadService.validateEnum(row.status as string, ProjectStatus, 'Status');
+                }
+                if (row.priority) {
+                    this.excelUploadService.validateEnum(row.priority as string, ProjectPriority, 'Priority');
+                }
 
-            // Resolve subLocationName to subLocationId
-            const subLocation = await this.prisma.subLocation.findFirst({
-                where: {
-                    subLocationName: row.subLocationName,
-                },
-            });
+                const subLocationId = subLocationMap.get(row.subLocationName?.toLowerCase());
+                if (!subLocationId) continue;
 
-            if (!subLocation) {
-                throw new BadRequestException(
-                    `Sub Location not found: ${row.subLocationName}`,
-                );
+                processedData.push({
+                    projectNo: row.projectNo,
+                    projectName: row.projectName,
+                    subLocationId: subLocationId,
+                    deadline: row.deadline,
+                    priority: row.priority as ProjectPriority,
+                    status: row.status as ProjectStatus,
+                    remark: row.remark,
+                });
+            } catch (err) {
+                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
             }
-
-            processedData.push({
-                projectNo: row.projectNo,
-                projectName: row.projectName,
-                subLocationId: subLocation.id, // Use the resolved subLocationId
-                deadline: row.deadline,
-                priority: row.priority,
-                status: row.status,
-                remark: row.remark,
-            });
         }
 
         const result = await this.bulkCreate({ projects: processedData }, userId);
