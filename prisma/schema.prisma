@@ -357,6 +357,9 @@ model ClientCompany {
   @@index([groupId])
   @@index([status])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([groupId, status, createdAt])
+  @@index([status, createdAt])
   @@map("client_companies")
 }
 
@@ -395,6 +398,9 @@ model ClientLocation {
   @@index([companyId])
   @@index([status])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([companyId, status, createdAt])
+  @@index([status, createdAt])
   @@map("client_locations")
 }
 
@@ -436,6 +442,10 @@ model SubLocation {
   @@index([locationId])
   @@index([status])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([companyId, locationId, status])
+  @@index([locationId, status, createdAt])
+  @@index([status, createdAt])
   @@map("sub_locations")
 }
 
@@ -473,6 +483,10 @@ model Project {
   @@index([priority])
   @@index([deadline])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([subLocationId, status, priority])
+  @@index([status, priority, deadline])
+  @@index([status, createdAt])
   @@map("projects")
 }
 
@@ -517,6 +531,10 @@ model Team {
   @@index([subLocationId])
   @@index([status])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([clientGroupId, companyId, status])
+  @@index([companyId, locationId, status])
+  @@index([status, createdAt])
   @@map("teams")
 }
 
@@ -559,6 +577,10 @@ model Group {
   @@index([subLocationId])
   @@index([status])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([clientGroupId, companyId, status])
+  @@index([companyId, locationId, status])
+  @@index([status, createdAt])
   @@map("groups")
 }
 
@@ -601,6 +623,10 @@ model IpAddress {
   @@index([subLocationId])
   @@index([status])
   @@index([createdAt])
+  // Compound indexes for optimized filtering with millions of records
+  @@index([clientGroupId, companyId, status])
+  @@index([companyId, locationId, status])
+  @@index([status, createdAt])
   @@map("ip_addresses")
 }
 
