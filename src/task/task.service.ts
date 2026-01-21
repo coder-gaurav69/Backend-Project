@@ -32,7 +32,7 @@ export class TaskService {
     }
 
     async findAll(pagination: PaginationDto, filter: FilterTaskDto) {
-        const { page = 1, limit = 10 } = pagination;
+        const { page = 1, limit = 25 } = pagination;
         const skip = (page - 1) * limit;
 
         const where: Prisma.TaskWhereInput = {};

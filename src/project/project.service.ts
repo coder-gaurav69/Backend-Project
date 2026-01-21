@@ -67,7 +67,7 @@ export class ProjectService {
     async findAll(pagination: PaginationDto, filter?: FilterProjectDto) {
         const {
             page = 1,
-            limit = 10,
+            limit = 25,
             search,
             sortBy = 'createdAt',
             sortOrder = 'desc',

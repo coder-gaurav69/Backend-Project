@@ -76,7 +76,7 @@ export class ClientCompanyService {
     async findAll(pagination: PaginationDto, filter?: FilterClientCompanyDto) {
         const {
             page = 1,
-            limit = 10,
+            limit = 25,
             search,
             sortBy = 'createdAt',
             sortOrder = 'desc',

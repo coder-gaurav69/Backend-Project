@@ -61,7 +61,7 @@ export class ClientGroupService {
     }
 
     async findAll(pagination: PaginationDto, filter?: FilterClientGroupDto) {
-        const { page = 1, limit = 10, search, sortBy = 'createdAt', sortOrder = 'desc' } = pagination;
+        const { page = 1, limit = 25, search, sortBy = 'createdAt', sortOrder = 'desc' } = pagination;
         const skip = (page - 1) * limit;
 
         // Build where clause

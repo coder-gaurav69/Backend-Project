@@ -96,7 +96,7 @@ export class GroupService {
     async findAll(pagination: PaginationDto, filter?: FilterGroupDto) {
         const {
             page = 1,
-            limit = 10,
+            limit = 25,
             search,
             sortBy = 'createdAt',
             sortOrder = 'desc',
