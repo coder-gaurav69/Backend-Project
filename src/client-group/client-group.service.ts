@@ -12,6 +12,7 @@ import {
     FilterClientGroupDto,
 } from './dto/client-group.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { AutoNumberService } from '../common/services/auto-number.service';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { ClientGroupStatus, Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
@@ -28,6 +29,7 @@ export class ClientGroupService {
         private prisma: PrismaService,
         private redisService: RedisService,
         private configService: ConfigService,
+        private autoNumberService: AutoNumberService,
     ) { }
 
     async create(dto: CreateClientGroupDto, userId: string) {
@@ -41,7 +43,7 @@ export class ClientGroupService {
         }
 
         // Generate Group Number
-        const generatedGroupNo = await this.generateGroupNo();
+        const generatedGroupNo = await this.autoNumberService.generateClientGroupNo();
 
         const clientGroup = await this.prisma.clientGroup.create({
             data: {
@@ -203,7 +205,7 @@ export class ClientGroupService {
         const existingNos = new Set(allExisting.map(x => x.groupNo));
 
         const prefix = this.configService.get('CG_NUMBER_PREFIX', 'CG-');
-        let currentNum = parseInt((await this.generateGroupNo()).replace(prefix, ''));
+        let currentNum = parseInt((await this.autoNumberService.generateClientGroupNo()).replace(prefix, ''));
 
         // 2. Process each record individually. 
         // We avoid $transaction here so that one failure doesn't kill the whole 50-record batch.
@@ -501,26 +503,6 @@ export class ClientGroupService {
 
         this.logger.log(`[UPLOAD_SUCCESS] Returning result with ${result.success} successful records`);
         return result;
-    }
-
-    private async generateGroupNo(): Promise<string> {
-        const prefix = this.configService.get('CG_NUMBER_PREFIX', 'CG-');
-        const startNumber = parseInt(this.configService.get('CG_NUMBER_START', '11001'));
-
-        // Get the last Group number
-        const lastClientGroup = await this.prisma.clientGroup.findFirst({
-            orderBy: { groupNo: 'desc' },
-            select: { groupNo: true },
-        });
-
-        let nextNumber = startNumber;
-
-        if (lastClientGroup) {
-            const lastNumber = parseInt(lastClientGroup.groupNo.replace(prefix, ''));
-            nextNumber = lastNumber + 1;
-        }
-
-        return `${prefix}${nextNumber}`;
     }
 
     private async invalidateCache() {

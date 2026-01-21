@@ -162,21 +162,42 @@ export class AutoNumberService {
             this.configService.get(startEnvKey, defaultStart),
         );
 
-        // Get the last record ordered by the number field
-        const lastRecord = await (this.prisma as any)[modelName].findFirst({
-            orderBy: { [fieldName]: 'desc' },
-            select: { [fieldName]: true },
+        // Fetch all records starting with prefix to find the TRUE maximum
+        // This is safe for typical table sizes and handles string-sorting anomalies
+        const existingRecords = await (this.prisma as any)[modelName].findMany({
+            where: { [fieldName]: { startsWith: prefix, mode: 'insensitive' } },
+            select: { [fieldName]: true }
         });
 
-        let nextNumber = startNumber;
-
-        if (lastRecord && lastRecord[fieldName]) {
-            const lastNumber = parseInt(
-                lastRecord[fieldName].replace(prefix, ''),
-            );
-            nextNumber = lastNumber + 1;
+        let maxNum = startNumber - 1;
+        for (const rec of existingRecords) {
+            const raw = rec[fieldName].toString();
+            const numPart = raw.replace(new RegExp(prefix, 'i'), '');
+            const parsed = parseInt(numPart);
+            if (!isNaN(parsed) && parsed > maxNum) {
+                maxNum = parsed;
+            }
         }
 
-        return `${prefix}${nextNumber}`;
+        let nextNum = maxNum + 1;
+        let finalNo = `${prefix}${nextNum}`;
+
+        // --- FINAL SAFETY VERIFICATION ---
+        // Even after finding max, we double check to handle gaps or race conditions
+        let exists = await (this.prisma as any)[modelName].findFirst({
+            where: { [fieldName]: { equals: finalNo, mode: 'insensitive' } },
+        });
+
+        let safetyCounter = 0;
+        while (exists && safetyCounter < 100) {
+            nextNum++;
+            finalNo = `${prefix}${nextNum}`;
+            exists = await (this.prisma as any)[modelName].findFirst({
+                where: { [fieldName]: { equals: finalNo, mode: 'insensitive' } },
+            });
+            safetyCounter++;
+        }
+
+        return finalNo;
     }
 }
