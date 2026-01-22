@@ -353,25 +353,27 @@ export class IpAddressService {
         }
 
         const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        let totalInserted = 0;
         for (const chunk of chunks) {
             try {
-                await this.prisma.ipAddress.createMany({
+                const result = await this.prisma.ipAddress.createMany({
                     data: chunk,
                     skipDuplicates: true,
                 });
+                totalInserted += result.count;
             } catch (err) {
                 this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
                 errors.push({ error: 'Batch insert failed', details: err.message });
             }
         }
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.ipAddresses.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.ipAddresses.length} | Inserted Actual: ${totalInserted} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: dataToInsert.length,
-            failed: errors.length,
-            message: `Successfully processed ${dataToInsert.length} records.`,
+            success: totalInserted,
+            failed: dto.ipAddresses.length - totalInserted,
+            message: `Successfully inserted ${totalInserted} records.`,
             errors,
         };
     }
@@ -449,6 +451,8 @@ export class IpAddressService {
 
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
+        this.logger.log(`[UPLOAD] File: ${file?.originalname} | Size: ${file?.size}`);
+
         const columnMapping = {
             ipNo: ['ipno', 'ipnumber'],
             ipAddress: ['ipaddress', 'ip'],
@@ -463,19 +467,17 @@ export class IpAddressService {
 
         const requiredColumns = ['ipAddress', 'ipAddressName'];
 
-        const { data, errors } = await this.excelUploadService.parseFile<CreateIpAddressDto>(
+        const { data, errors: parseErrors } = await this.excelUploadService.parseFile<CreateIpAddressDto>(
             file,
             columnMapping,
             requiredColumns,
         );
 
         if (data.length === 0) {
-            throw new BadRequestException(
-                'No valid data found to import. Please check file format and column names.',
-            );
+            throw new BadRequestException('No valid data found to import. Please check file format and column names.');
         }
 
-        // 1. Resolve all relation names in batches
+        // Resolve relations
         const clientGroupNames = Array.from(new Set(data.filter(r => (r as any).clientGroupName).map(r => (r as any).clientGroupName)));
         const companyNames = Array.from(new Set(data.filter(r => (r as any).companyName).map(r => (r as any).companyName)));
         const locationNames = Array.from(new Set(data.filter(r => (r as any).locationName).map(r => (r as any).locationName)));
@@ -493,38 +495,50 @@ export class IpAddressService {
         const locationMap = new Map(dbLocations.map(l => [l.locationName.toLowerCase(), l.id]));
         const subLocationMap = new Map(dbSubLocations.map(s => [s.subLocationName.toLowerCase(), s.id]));
 
-        // 2. Build processing data
         const processedData: CreateIpAddressDto[] = [];
-        for (const row of data) {
+        const processingErrors: any[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
             try {
-                if (row.status) {
-                    this.excelUploadService.validateEnum(row.status as string, IpAddressStatus, 'Status');
-                }
+                const status = (row as any).status ? this.excelUploadService.validateEnum((row as any).status as string, IpAddressStatus, 'Status') : IpAddressStatus.ACTIVE;
+
+                const clientGroupId = (row as any).clientGroupName ? clientGroupMap.get((row as any).clientGroupName.toLowerCase()) : undefined;
+                if ((row as any).clientGroupName && !clientGroupId) throw new Error(`Client Group "${(row as any).clientGroupName}" not found`);
+
+                const companyId = (row as any).companyName ? companyMap.get((row as any).companyName.toLowerCase()) : undefined;
+                if ((row as any).companyName && !companyId) throw new Error(`Company "${(row as any).companyName}" not found`);
+
+                const locationId = (row as any).locationName ? locationMap.get((row as any).locationName.toLowerCase()) : undefined;
+                if ((row as any).locationName && !locationId) throw new Error(`Location "${(row as any).locationName}" not found`);
+
+                const subLocationId = (row as any).subLocationName ? subLocationMap.get((row as any).subLocationName.toLowerCase()) : undefined;
+                if ((row as any).subLocationName && !subLocationId) throw new Error(`Sub Location "${(row as any).subLocationName}" not found`);
 
                 processedData.push({
                     ipNo: (row as any).ipNo,
                     ipAddress: (row as any).ipAddress,
                     ipAddressName: (row as any).ipAddressName,
-                    clientGroupId: (row as any).clientGroupName ? clientGroupMap.get((row as any).clientGroupName.toLowerCase()) : undefined,
-                    companyId: (row as any).companyName ? companyMap.get((row as any).companyName.toLowerCase()) : undefined,
-                    locationId: (row as any).locationName ? locationMap.get((row as any).locationName.toLowerCase()) : undefined,
-                    subLocationId: (row as any).subLocationName ? subLocationMap.get((row as any).subLocationName.toLowerCase()) : undefined,
-                    status: (row as any).status as IpAddressStatus,
+                    clientGroupId,
+                    companyId,
+                    locationId,
+                    subLocationId,
+                    status: status as IpAddressStatus,
                     remark: (row as any).remark,
                 });
             } catch (err) {
-                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
+                processingErrors.push({ row: i + 2, error: err.message });
             }
+        }
+
+        if (processedData.length === 0 && processingErrors.length > 0) {
+            throw new BadRequestException(`Validation Failed: ${processingErrors[0].error}`);
         }
 
         const result = await this.bulkCreate({ ipAddresses: processedData }, userId);
 
-        if (result.success === 0 && result.failed > 0) {
-            const firstError = result.errors?.[0]?.error || 'Unknown validation error';
-            throw new BadRequestException(
-                `Upload Failed: All ${result.failed} records failed validation. Example error: ${firstError}`,
-            );
-        }
+        result.errors = [...(result.errors || []), ...parseErrors, ...processingErrors];
+        result.failed += parseErrors.length + processingErrors.length;
 
         return result;
     }

@@ -1,6 +1,3 @@
-// Enterprise-grade Prisma Schema for HRMS Backend
-// Production-ready with full audit trails, soft deletes, and proper indexing
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,9 +7,475 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================
-// ENUMS
-// ============================================
+model User {
+  id                  String           @id @default(uuid()) @db.Uuid
+  email               String           @unique
+  password            String
+  firstName           String           @map("first_name")
+  lastName            String           @map("last_name")
+  role                UserRole         @default(EMPLOYEE)
+  status              UserStatus       @default(PENDING_VERIFICATION)
+  isEmailVerified     Boolean          @default(false) @map("is_email_verified")
+  lastLoginAt         DateTime?        @map("last_login_at")
+  lastLoginIp         String?          @map("last_login_ip")
+  passwordChangedAt   DateTime?        @map("password_changed_at")
+  phoneNumber         String?          @unique @map("phone_number")
+  allowedIps          String[]         @default([]) @map("allowed_ips")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+  deletedAt           DateTime?        @map("deleted_at")
+  activityLogs        ActivityLog[]
+  auditLogs           AuditLog[]
+  createdCompanies    ClientCompany[]  @relation("CompanyCreatedByUser")
+  updatedCompanies    ClientCompany[]  @relation("CompanyUpdatedByUser")
+  createdClientGroups ClientGroup[]    @relation("CreatedByUser")
+  updatedClientGroups ClientGroup[]    @relation("UpdatedByUser")
+  createdLocations    ClientLocation[] @relation("LocationCreatedByUser")
+  updatedLocations    ClientLocation[] @relation("LocationUpdatedByUser")
+  createdGroups       Group[]          @relation("GroupCreatedByUser")
+  updatedGroups       Group[]          @relation("GroupUpdatedByUser")
+  createdIpAddresses  IpAddress[]      @relation("IpAddressCreatedByUser")
+  updatedIpAddresses  IpAddress[]      @relation("IpAddressUpdatedByUser")
+  createdProjects     Project[]        @relation("ProjectCreatedByUser")
+  updatedProjects     Project[]        @relation("ProjectUpdatedByUser")
+  refreshTokens       RefreshToken[]
+  sessions            Session[]
+  createdSubLocations SubLocation[]    @relation("SubLocationCreatedByUser")
+  updatedSubLocations SubLocation[]    @relation("SubLocationUpdatedByUser")
+  assignedTasks       Task[]           @relation("TaskAssignedTo")
+  createdTasks        Task[]           @relation("TaskCreatedBy")
+  workingTasks        Task[]           @relation("TaskWorkingBy")
+  createdTeams        Team[]           @relation("TeamCreatedByUser")
+  updatedTeams        Team[]           @relation("TeamUpdatedByUser")
+  notifications       Notification[]
+  groupMembers        GroupMember[]
+
+  @@index([email])
+  @@index([status])
+  @@index([role])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  token      String    @unique
+  userId     String    @map("user_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  ipAddress  String?   @map("ip_address")
+  isRevoked  Boolean   @default(false) @map("is_revoked")
+  replacedBy String?   @map("replaced_by")
+  revokedAt  DateTime? @map("revoked_at")
+  userAgent  String?   @map("user_agent")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionId    String   @unique @map("session_id")
+  userId       String   @map("user_id") @db.Uuid
+  ipAddress    String   @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  expiresAt    DateTime @map("expires_at")
+  isActive     Boolean  @default(true) @map("is_active")
+  lastActivity DateTime @default(now()) @map("last_activity")
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model ClientGroup {
+  id          String            @id @default(uuid()) @db.Uuid
+  groupNo     String            @unique @map("group_no")
+  groupName   String            @map("group_name")
+  groupCode   String            @unique @map("group_code")
+  country     String
+  status      ClientGroupStatus @default(ACTIVE)
+  remark      String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  createdBy   String?           @map("created_by") @db.Uuid
+  updatedBy   String?           @map("updated_by") @db.Uuid
+  companies   ClientCompany[]
+  creator     User?             @relation("CreatedByUser", fields: [createdBy], references: [id])
+  updater     User?             @relation("UpdatedByUser", fields: [updatedBy], references: [id])
+  groups      Group[]
+  ipAddresses IpAddress[]
+  teams       Team[]
+
+  @@index([groupNo])
+  @@index([groupCode])
+  @@index([status])
+  @@index([createdAt])
+  @@map("client_groups")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  oldValue  Json?    @map("old_value")
+  newValue  Json?    @map("new_value")
+  ipAddress String   @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model ActivityLog {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String?      @map("user_id") @db.Uuid
+  type        ActivityType
+  description String
+  metadata    Json?
+  ipAddress   String       @map("ip_address")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  user        User?        @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model Notification {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  title       String
+  description String
+  type        String   @default("SYSTEM") // TASK, SYSTEM, etc.
+  isRead      Boolean  @default(false) @map("is_read")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model FileMetadata {
+  id           String    @id @default(uuid()) @db.Uuid
+  fileName     String    @map("file_name")
+  originalName String    @map("original_name")
+  mimeType     String    @map("mime_type")
+  size         Int
+  url          String
+  storageKey   String    @map("storage_key")
+  uploadedBy   String?   @map("uploaded_by") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  @@index([uploadedBy])
+  @@index([createdAt])
+  @@map("file_metadata")
+}
+
+model ClientCompany {
+  id           String           @id @default(uuid()) @db.Uuid
+  companyNo    String           @unique @map("company_no")
+  companyName  String           @map("company_name")
+  companyCode  String           @unique @map("company_code")
+  groupId      String           @map("group_id") @db.Uuid
+  address      String?
+  status       CompanyStatus    @default(ACTIVE)
+  remark       String?
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  createdBy    String?          @map("created_by") @db.Uuid
+  updatedBy    String?          @map("updated_by") @db.Uuid
+  creator      User?            @relation("CompanyCreatedByUser", fields: [createdBy], references: [id])
+  group        ClientGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  updater      User?            @relation("CompanyUpdatedByUser", fields: [updatedBy], references: [id])
+  locations    ClientLocation[]
+  groups       Group[]
+  ipAddresses  IpAddress[]
+  subLocations SubLocation[]
+  teams        Team[]
+
+  @@index([companyNo])
+  @@index([companyCode])
+  @@index([groupId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([groupId, status, createdAt])
+  @@index([status, createdAt])
+  @@map("client_companies")
+}
+
+model ClientLocation {
+  id           String         @id @default(uuid()) @db.Uuid
+  locationNo   String         @unique @map("location_no")
+  locationName String         @map("location_name")
+  locationCode String         @unique @map("location_code")
+  companyId    String         @map("company_id") @db.Uuid
+  address      String?
+  status       LocationStatus @default(ACTIVE)
+  remark       String?
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  createdBy    String?        @map("created_by") @db.Uuid
+  updatedBy    String?        @map("updated_by") @db.Uuid
+  company      ClientCompany  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  creator      User?          @relation("LocationCreatedByUser", fields: [createdBy], references: [id])
+  updater      User?          @relation("LocationUpdatedByUser", fields: [updatedBy], references: [id])
+  groups       Group[]
+  ipAddresses  IpAddress[]
+  subLocations SubLocation[]
+  teams        Team[]
+
+  @@index([locationNo])
+  @@index([locationCode])
+  @@index([companyId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([companyId, status, createdAt])
+  @@index([status, createdAt])
+  @@map("client_locations")
+}
+
+model SubLocation {
+  id              String            @id @default(uuid()) @db.Uuid
+  subLocationNo   String            @unique @map("sub_location_no")
+  subLocationName String            @map("sub_location_name")
+  subLocationCode String            @unique @map("sub_location_code")
+  companyId       String            @map("company_id") @db.Uuid
+  locationId      String            @map("location_id") @db.Uuid
+  address         String?
+  status          SubLocationStatus @default(ACTIVE)
+  remark          String?
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  createdBy       String?           @map("created_by") @db.Uuid
+  updatedBy       String?           @map("updated_by") @db.Uuid
+  groups          Group[]
+  ipAddresses     IpAddress[]
+  projects        Project[]
+  company         ClientCompany     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  creator         User?             @relation("SubLocationCreatedByUser", fields: [createdBy], references: [id])
+  location        ClientLocation    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  updater         User?             @relation("SubLocationUpdatedByUser", fields: [updatedBy], references: [id])
+  teams           Team[]
+
+  @@index([subLocationNo])
+  @@index([subLocationCode])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([companyId, locationId, status])
+  @@index([locationId, status, createdAt])
+  @@index([status, createdAt])
+  @@map("sub_locations")
+}
+
+model Project {
+  id            String          @id @default(uuid()) @db.Uuid
+  projectNo     String          @unique @map("project_no")
+  projectName   String          @map("project_name")
+  subLocationId String          @map("sub_location_id") @db.Uuid
+  deadline      DateTime?
+  priority      ProjectPriority @default(MEDIUM)
+  status        ProjectStatus   @default(ACTIVE)
+  remark        String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  createdBy     String?         @map("created_by") @db.Uuid
+  updatedBy     String?         @map("updated_by") @db.Uuid
+  creator       User?           @relation("ProjectCreatedByUser", fields: [createdBy], references: [id])
+  subLocation   SubLocation     @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  updater       User?           @relation("ProjectUpdatedByUser", fields: [updatedBy], references: [id])
+  tasks         Task[]
+
+  @@index([projectNo])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([priority])
+  @@index([deadline])
+  @@index([createdAt])
+  @@index([subLocationId, status, priority])
+  @@index([status, priority, deadline])
+  @@index([status, createdAt])
+  @@map("projects")
+}
+
+model Team {
+  id                   String          @id @default(uuid()) @db.Uuid
+  teamNo               String          @unique @map("team_no")
+  teamName             String          @map("team_name")
+  email                String?
+  phone                String?
+  taskAssignPermission Boolean         @default(false) @map("task_assign_permission")
+  clientGroupId        String?         @map("client_group_id") @db.Uuid
+  companyId            String?         @map("company_id") @db.Uuid
+  locationId           String?         @map("location_id") @db.Uuid
+  subLocationId        String?         @map("sub_location_id") @db.Uuid
+  status               TeamStatus      @default(ACTIVE)
+  loginMethod          LoginMethod     @default(EMAIL)
+  remark               String?
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  createdBy            String?         @map("created_by") @db.Uuid
+  updatedBy            String?         @map("updated_by") @db.Uuid
+  clientGroup          ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
+  company              ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  creator              User?           @relation("TeamCreatedByUser", fields: [createdBy], references: [id])
+  location             ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  subLocation          SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  updater              User?           @relation("TeamUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([teamNo])
+  @@index([clientGroupId])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([clientGroupId, companyId, status])
+  @@index([companyId, locationId, status])
+  @@index([status, createdAt])
+  @@map("teams")
+}
+
+model Group {
+  id            String          @id @default(uuid()) @db.Uuid
+  groupNo       String          @unique @map("group_no")
+  groupName     String          @map("group_name")
+  groupCode     String          @unique @map("group_code")
+  clientGroupId String?         @map("client_group_id") @db.Uuid
+  companyId     String?         @map("company_id") @db.Uuid
+  locationId    String?         @map("location_id") @db.Uuid
+  subLocationId String?         @map("sub_location_id") @db.Uuid
+  status        GroupStatus     @default(ACTIVE)
+  remark        String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  createdBy     String?         @map("created_by") @db.Uuid
+  updatedBy     String?         @map("updated_by") @db.Uuid
+  clientGroup   ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
+  company       ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  creator       User?           @relation("GroupCreatedByUser", fields: [createdBy], references: [id])
+  location      ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  subLocation   SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  updater       User?           @relation("GroupUpdatedByUser", fields: [updatedBy], references: [id])
+  members       GroupMember[]
+  tasks         Task[]          @relation("TaskToGroup")
+
+  @@index([groupNo])
+  @@index([groupCode])
+  @@index([clientGroupId])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([clientGroupId, companyId, status])
+  @@index([companyId, locationId, status])
+  @@index([status, createdAt])
+  @@map("groups")
+}
+
+model GroupMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  groupId   String   @map("group_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      String   @default("MEMBER") // OWNER, ADMIN, MEMBER
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+model IpAddress {
+  id            String          @id @default(uuid()) @db.Uuid
+  ipNo          String          @unique @map("ip_no")
+  ipAddress     String          @map("ip_address")
+  ipAddressName String          @map("ip_address_name")
+  clientGroupId String?         @map("client_group_id") @db.Uuid
+  companyId     String?         @map("company_id") @db.Uuid
+  locationId    String?         @map("location_id") @db.Uuid
+  subLocationId String?         @map("sub_location_id") @db.Uuid
+  status        IpAddressStatus @default(ACTIVE)
+  remark        String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  createdBy     String?         @map("created_by") @db.Uuid
+  updatedBy     String?         @map("updated_by") @db.Uuid
+  clientGroup   ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
+  company       ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  creator       User?           @relation("IpAddressCreatedByUser", fields: [createdBy], references: [id])
+  location      ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  subLocation   SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
+  updater       User?           @relation("IpAddressUpdatedByUser", fields: [updatedBy], references: [id])
+
+  @@index([ipNo])
+  @@index([ipAddress])
+  @@index([clientGroupId])
+  @@index([companyId])
+  @@index([locationId])
+  @@index([subLocationId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([clientGroupId, companyId, status])
+  @@index([companyId, locationId, status])
+  @@index([status, createdAt])
+  @@map("ip_addresses")
+}
+
+model Task {
+  id             String     @id @default(uuid()) @db.Uuid
+  taskNo         String     @unique @map("task_no")
+  taskTitle      String     @map("task_title")
+  priority       String?
+  taskStatus     TaskStatus @default(PENDING) @map("task_status")
+  additionalNote String?    @map("additional_note")
+  deadline       DateTime?
+  completeTime   DateTime?  @map("complete_time")
+  reviewedTime   DateTime?  @map("reviewed_time")
+  reminderTime   DateTime?  @map("reminder_time")
+  attachment     String?
+  remarkChat     String?    @map("remark_chat")
+  creatingTime   DateTime   @default(now()) @map("creating_time")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  projectId      String?    @map("project_id") @db.Uuid
+  assignedTo     String?    @map("assigned_to") @db.Uuid
+  targetGroupId  String?    @map("target_group_id") @db.Uuid
+  createdBy      String?    @map("created_by") @db.Uuid
+  workingBy      String?    @map("working_by") @db.Uuid
+  assignee       User?      @relation("TaskAssignedTo", fields: [assignedTo], references: [id])
+  creator        User?      @relation("TaskCreatedBy", fields: [createdBy], references: [id])
+  project        Project?   @relation(fields: [projectId], references: [id])
+  targetGroup    Group?     @relation("TaskToGroup", fields: [targetGroupId], references: [id])
+  worker         User?      @relation("TaskWorkingBy", fields: [workingBy], references: [id])
+
+  @@index([taskNo])
+  @@index([taskStatus])
+  @@index([projectId])
+  @@index([assignedTo])
+  @@map("tasks")
+}
 
 enum UserRole {
   SUPER_ADMIN
@@ -47,230 +510,6 @@ enum ActivityType {
   OTP_VERIFICATION
 }
 
-// ============================================
-// USER MANAGEMENT
-// ============================================
-
-model User {
-  id                String      @id @default(uuid()) @db.Uuid
-  email             String      @unique
-  password          String
-  firstName         String      @map("first_name")
-  lastName          String      @map("last_name")
-  role              UserRole    @default(EMPLOYEE)
-  status            UserStatus  @default(PENDING_VERIFICATION)
-  isEmailVerified   Boolean     @default(false) @map("is_email_verified")
-  lastLoginAt       DateTime?   @map("last_login_at")
-  lastLoginIp       String?     @map("last_login_ip")
-  passwordChangedAt DateTime?   @map("password_changed_at")
-  phoneNumber       String?     @unique @map("phone_number")
-  allowedIps        String[]    @default([]) @map("allowed_ips")
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-  
-  // Relations
-  refreshTokens     RefreshToken[]
-  sessions          Session[]
-  auditLogs         AuditLog[]
-  activityLogs      ActivityLog[]
-  
-  // Client Group relations
-  createdClientGroups ClientGroup[] @relation("CreatedByUser")
-  updatedClientGroups ClientGroup[] @relation("UpdatedByUser")
-  
-  // Client Company relations
-  createdCompanies ClientCompany[] @relation("CompanyCreatedByUser")
-  updatedCompanies ClientCompany[] @relation("CompanyUpdatedByUser")
-  
-  // Client Location relations
-  createdLocations ClientLocation[] @relation("LocationCreatedByUser")
-  updatedLocations ClientLocation[] @relation("LocationUpdatedByUser")
-  
-  // Sub Location relations
-  createdSubLocations SubLocation[] @relation("SubLocationCreatedByUser")
-  updatedSubLocations SubLocation[] @relation("SubLocationUpdatedByUser")
-  
-  // Project relations
-  createdProjects Project[] @relation("ProjectCreatedByUser")
-  updatedProjects Project[] @relation("ProjectUpdatedByUser")
-  
-  // Team relations
-  createdTeams Team[] @relation("TeamCreatedByUser")
-  updatedTeams Team[] @relation("TeamUpdatedByUser")
-  
-  // Group relations
-  createdGroups Group[] @relation("GroupCreatedByUser")
-  updatedGroups Group[] @relation("GroupUpdatedByUser")
-  
-  // IP Address relations
-  createdIpAddresses IpAddress[] @relation("IpAddressCreatedByUser")
-  updatedIpAddresses IpAddress[] @relation("IpAddressUpdatedByUser")
-  
-  // Task relations
-  assignedTasks Task[] @relation("TaskAssignedTo")
-  createdTasks  Task[] @relation("TaskCreatedBy")
-  workingTasks  Task[] @relation("TaskWorkingBy")
-
-  @@index([email])
-  @@index([status])
-  @@index([role])
-  @@index([deletedAt])
-  @@map("users")
-}
-
-// ============================================
-// AUTHENTICATION & SESSION MANAGEMENT
-// ============================================
-
-model RefreshToken {
-  id           String    @id @default(uuid()) @db.Uuid
-  token        String    @unique
-  userId       String    @map("user_id") @db.Uuid
-  expiresAt    DateTime  @map("expires_at")
-  isRevoked    Boolean   @default(false) @map("is_revoked")
-  revokedAt    DateTime? @map("revoked_at")
-  replacedBy   String?   @map("replaced_by")
-  ipAddress    String?   @map("ip_address") // Changed to optional as per instruction
-  userAgent    String?   @map("user_agent")
-  
-  createdAt DateTime @default(now()) @map("created_at")
-  
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([token])
-  @@index([expiresAt])
-  @@map("refresh_tokens")
-}
-
-model Session {
-  id           String    @id @default(uuid()) @db.Uuid
-  sessionId    String    @unique @map("session_id")
-  userId       String    @map("user_id") @db.Uuid
-  ipAddress    String    @map("ip_address")
-  userAgent    String?   @map("user_agent")
-  expiresAt    DateTime  @map("expires_at")
-  isActive     Boolean   @default(true) @map("is_active")
-  lastActivity DateTime  @default(now()) @map("last_activity")
-  
-  createdAt DateTime @default(now()) @map("created_at")
-  
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([sessionId])
-  @@index([expiresAt])
-  @@map("sessions")
-}
-
-// ============================================
-// CLIENT GROUP MODULE
-// ============================================
-
-model ClientGroup {
-  id         String            @id @default(uuid()) @db.Uuid
-  groupNo    String            @unique @map("group_no")
-  groupName  String            @map("group_name")
-  groupCode  String            @unique @map("group_code")
-  country    String
-  status     ClientGroupStatus @default(ACTIVE)
-  remark     String?           @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  creator User? @relation("CreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("UpdatedByUser", fields: [updatedBy], references: [id])
-  
-  // Child modules
-  companies   ClientCompany[]
-  teams       Team[]
-  groups      Group[]
-  ipAddresses IpAddress[]
-
-  @@index([groupNo])
-  @@index([groupCode])
-  @@index([status])
-  @@index([createdAt])
-  @@map("client_groups")
-}
-
-// ============================================
-// AUDIT & ACTIVITY LOGS
-// ============================================
-
-model AuditLog {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String?  @map("user_id") @db.Uuid
-  action      String
-  entity      String
-  entityId    String?  @map("entity_id")
-  oldValue    Json?    @map("old_value")
-  newValue    Json?    @map("new_value")
-  ipAddress   String   @map("ip_address")
-  userAgent   String?  @map("user_agent")
-  
-  createdAt DateTime @default(now()) @map("created_at")
-  
-  user User? @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([entity])
-  @@index([createdAt])
-  @@map("audit_logs")
-}
-
-model ActivityLog {
-  id          String       @id @default(uuid()) @db.Uuid
-  userId      String?      @map("user_id") @db.Uuid
-  type        ActivityType
-  description String
-  metadata    Json?
-  ipAddress   String       @map("ip_address")
-  
-  createdAt DateTime @default(now()) @map("created_at")
-  
-  user User? @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([type])
-  @@index([createdAt])
-  @@map("activity_logs")
-}
-
-// ============================================
-// FILE STORAGE METADATA
-// ============================================
-
-model FileMetadata {
-  id           String    @id @default(uuid()) @db.Uuid
-  fileName     String    @map("file_name")
-  originalName String    @map("original_name")
-  mimeType     String    @map("mime_type")
-  size         Int
-  url          String
-  storageKey   String    @map("storage_key") // Cloud storage key/path
-  uploadedBy   String?   @map("uploaded_by") @db.Uuid
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  deletedAt DateTime? @map("deleted_at")
-
-  @@index([uploadedBy])
-  @@index([createdAt])
-  @@map("file_metadata")
-}
-
-// ============================================
-// HRMS MODULES - CLIENT HIERARCHY
-// ============================================
-
-// Status enums for all modules
 enum CompanyStatus {
   ACTIVE
   INACTIVE
@@ -319,354 +558,6 @@ enum GroupStatus {
 enum IpAddressStatus {
   ACTIVE
   INACTIVE
-}
-
-// ============================================
-// CLIENT COMPANY MODULE
-// ============================================
-
-model ClientCompany {
-  id          String        @id @default(uuid()) @db.Uuid
-  companyNo   String        @unique @map("company_no")
-  companyName String        @map("company_name")
-  companyCode String        @unique @map("company_code")
-  groupId     String        @map("group_id") @db.Uuid
-  address     String?       @db.Text
-  status      CompanyStatus @default(ACTIVE)
-  remark      String?       @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  group     ClientGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  locations ClientLocation[]
-  subLocations SubLocation[]
-  teams     Team[]
-  groups    Group[]
-  ipAddresses IpAddress[]
-  
-  creator User? @relation("CompanyCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("CompanyUpdatedByUser", fields: [updatedBy], references: [id])
-
-  @@index([companyNo])
-  @@index([companyCode])
-  @@index([groupId])
-  @@index([status])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([groupId, status, createdAt])
-  @@index([status, createdAt])
-  @@map("client_companies")
-}
-
-// ============================================
-// CLIENT LOCATION MODULE
-// ============================================
-
-model ClientLocation {
-  id           String         @id @default(uuid()) @db.Uuid
-  locationNo   String         @unique @map("location_no")
-  locationName String         @map("location_name")
-  locationCode String         @unique @map("location_code")
-  companyId    String         @map("company_id") @db.Uuid
-  address      String?        @db.Text
-  status       LocationStatus @default(ACTIVE)
-  remark       String?        @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  company      ClientCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  subLocations SubLocation[]
-  teams        Team[]
-  groups       Group[]
-  ipAddresses  IpAddress[]
-  
-  creator User? @relation("LocationCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("LocationUpdatedByUser", fields: [updatedBy], references: [id])
-
-  @@index([locationNo])
-  @@index([locationCode])
-  @@index([companyId])
-  @@index([status])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([companyId, status, createdAt])
-  @@index([status, createdAt])
-  @@map("client_locations")
-}
-
-// ============================================
-// SUB LOCATION MODULE
-// ============================================
-
-model SubLocation {
-  id              String            @id @default(uuid()) @db.Uuid
-  subLocationNo   String            @unique @map("sub_location_no")
-  subLocationName String            @map("sub_location_name")
-  subLocationCode String            @unique @map("sub_location_code")
-  companyId       String            @map("company_id") @db.Uuid
-  locationId      String            @map("location_id") @db.Uuid
-  address         String?           @db.Text
-  status          SubLocationStatus @default(ACTIVE)
-  remark          String?           @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  company     ClientCompany  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  location    ClientLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  projects    Project[]
-  teams       Team[]
-  groups      Group[]
-  ipAddresses IpAddress[]
-  
-  creator User? @relation("SubLocationCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("SubLocationUpdatedByUser", fields: [updatedBy], references: [id])
-
-  @@index([subLocationNo])
-  @@index([subLocationCode])
-  @@index([companyId])
-  @@index([locationId])
-  @@index([status])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([companyId, locationId, status])
-  @@index([locationId, status, createdAt])
-  @@index([status, createdAt])
-  @@map("sub_locations")
-}
-
-// ============================================
-// PROJECT MODULE
-// ============================================
-
-model Project {
-  id            String          @id @default(uuid()) @db.Uuid
-  projectNo     String          @unique @map("project_no")
-  projectName   String          @map("project_name")
-  subLocationId String          @map("sub_location_id") @db.Uuid
-  deadline      DateTime?
-  priority      ProjectPriority @default(MEDIUM)
-  status        ProjectStatus   @default(ACTIVE)
-  remark        String?         @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  subLocation SubLocation @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
-  
-  creator User? @relation("ProjectCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("ProjectUpdatedByUser", fields: [updatedBy], references: [id])
-
-  tasks       Task[]
-
-  @@index([projectNo])
-  @@index([subLocationId])
-  @@index([status])
-  @@index([priority])
-  @@index([deadline])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([subLocationId, status, priority])
-  @@index([status, priority, deadline])
-  @@index([status, createdAt])
-  @@map("projects")
-}
-
-// ============================================
-// TEAM MODULE
-// ============================================
-
-model Team {
-  id                  String      @id @default(uuid()) @db.Uuid
-  teamNo              String      @unique @map("team_no")
-  teamName            String      @map("team_name")
-  email               String?
-  phone               String?
-  taskAssignPermission Boolean    @default(false) @map("task_assign_permission")
-  clientGroupId       String?     @map("client_group_id") @db.Uuid
-  companyId           String?     @map("company_id") @db.Uuid
-  locationId          String?     @map("location_id") @db.Uuid
-  subLocationId       String?     @map("sub_location_id") @db.Uuid
-  status              TeamStatus  @default(ACTIVE)
-  loginMethod         LoginMethod @default(EMAIL)
-  remark              String?     @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  clientGroup ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
-  company     ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  location    ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  subLocation SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
-  
-  creator User? @relation("TeamCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("TeamUpdatedByUser", fields: [updatedBy], references: [id])
-
-  @@index([teamNo])
-  @@index([clientGroupId])
-  @@index([companyId])
-  @@index([locationId])
-  @@index([subLocationId])
-  @@index([status])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([clientGroupId, companyId, status])
-  @@index([companyId, locationId, status])
-  @@index([status, createdAt])
-  @@map("teams")
-}
-
-// ============================================
-// GROUP MODULE
-// ============================================
-
-model Group {
-  id            String      @id @default(uuid()) @db.Uuid
-  groupNo       String      @unique @map("group_no")
-  groupName     String      @map("group_name")
-  groupCode     String      @unique @map("group_code")
-  clientGroupId String?     @map("client_group_id") @db.Uuid
-  companyId     String?     @map("company_id") @db.Uuid
-  locationId    String?     @map("location_id") @db.Uuid
-  subLocationId String?     @map("sub_location_id") @db.Uuid
-  status        GroupStatus @default(ACTIVE)
-  remark        String?     @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  clientGroup ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
-  company     ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  location    ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  subLocation SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
-  
-  creator User? @relation("GroupCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("GroupUpdatedByUser", fields: [updatedBy], references: [id])
-
-  @@index([groupNo])
-  @@index([groupCode])
-  @@index([clientGroupId])
-  @@index([companyId])
-  @@index([locationId])
-  @@index([subLocationId])
-  @@index([status])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([clientGroupId, companyId, status])
-  @@index([companyId, locationId, status])
-  @@index([status, createdAt])
-  @@map("groups")
-}
-
-// ============================================
-// IP ADDRESS MODULE
-// ============================================
-
-model IpAddress {
-  id            String          @id @default(uuid()) @db.Uuid
-  ipNo          String          @unique @map("ip_no")
-  ipAddress     String          @map("ip_address")
-  ipAddressName String          @map("ip_address_name")
-  clientGroupId String?         @map("client_group_id") @db.Uuid
-  companyId     String?         @map("company_id") @db.Uuid
-  locationId    String?         @map("location_id") @db.Uuid
-  subLocationId String?         @map("sub_location_id") @db.Uuid
-  status        IpAddressStatus @default(ACTIVE)
-  remark        String?         @db.Text
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
-  
-  // Relations
-  clientGroup ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Cascade)
-  company     ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  location    ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  subLocation SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Cascade)
-  
-  creator User? @relation("IpAddressCreatedByUser", fields: [createdBy], references: [id])
-  updater User? @relation("IpAddressUpdatedByUser", fields: [updatedBy], references: [id])
-
-  @@index([ipNo])
-  @@index([ipAddress])
-  @@index([clientGroupId])
-  @@index([companyId])
-  @@index([locationId])
-  @@index([subLocationId])
-  @@index([status])
-  @@index([createdAt])
-  // Compound indexes for optimized filtering with millions of records
-  @@index([clientGroupId, companyId, status])
-  @@index([companyId, locationId, status])
-  @@index([status, createdAt])
-  @@map("ip_addresses")
-}
-
-// ============================================
-// TASK MODULE
-// ============================================
-
-model Task {
-  id              String      @id @default(uuid()) @db.Uuid
-  taskNo          String      @unique @map("task_no")
-  taskTitle       String      @map("task_title")
-  priority        String?
-  taskStatus      TaskStatus  @default(PENDING) @map("task_status")
-  additionalNote  String?     @map("additional_note") @db.Text
-  deadline        DateTime?
-  completeTime    DateTime?   @map("complete_time")
-  reviewedTime    DateTime?   @map("reviewed_time")
-  reminderTime    DateTime?   @map("reminder_time")
-  attachment      String?
-  remarkChat      String?     @map("remark_chat") @db.Text
-  
-  creatingTime    DateTime    @default(now()) @map("creating_time")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
-  
-  projectId       String?     @map("project_id") @db.Uuid
-  assignedTo      String?     @map("assigned_to") @db.Uuid
-  createdBy       String?     @map("created_by") @db.Uuid
-  workingBy       String?     @map("working_by") @db.Uuid
-  
-  // Relations
-  project         Project?    @relation(fields: [projectId], references: [id])
-  assignee        User?       @relation("TaskAssignedTo", fields: [assignedTo], references: [id])
-  creator         User?       @relation("TaskCreatedBy", fields: [createdBy], references: [id])
-  worker          User?       @relation("TaskWorkingBy", fields: [workingBy], references: [id])
-
-  @@index([taskNo])
-  @@index([taskStatus])
-  @@index([projectId])
-  @@index([assignedTo])
-  @@map("tasks")
 }
 
 enum TaskStatus {

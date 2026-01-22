@@ -397,25 +397,27 @@ export class SubLocationService {
         }
 
         const chunks = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        let totalInserted = 0;
         for (const chunk of chunks) {
             try {
-                await this.prisma.subLocation.createMany({
+                const result = await this.prisma.subLocation.createMany({
                     data: chunk,
                     skipDuplicates: true,
                 });
+                totalInserted += result.count;
             } catch (err) {
                 this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
                 errors.push({ error: 'Batch insert failed', details: err.message });
             }
         }
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.subLocations.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.subLocations.length} | Inserted Actual: ${totalInserted} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: dataToInsert.length,
-            failed: errors.length,
-            message: `Successfully processed ${dataToInsert.length} records.`,
+            success: totalInserted,
+            failed: dto.subLocations.length - totalInserted,
+            message: `Successfully inserted ${totalInserted} records.`,
             errors,
         };
     }
@@ -493,6 +495,8 @@ export class SubLocationService {
 
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
+        this.logger.log(`[UPLOAD] File: ${file?.originalname} | Size: ${file?.size}`);
+
         const columnMapping = {
             subLocationNo: ['sublocationno', 'sublocationnumber', 'no', 'number'],
             subLocationName: ['sublocationname', 'name', 'sname', 'sublocation'],
@@ -506,16 +510,14 @@ export class SubLocationService {
 
         const requiredColumns = ['subLocationName', 'subLocationCode', 'locationName', 'companyName'];
 
-        const { data, errors } = await this.excelUploadService.parseFile<any>(
+        const { data, errors: parseErrors } = await this.excelUploadService.parseFile<any>(
             file,
             columnMapping,
             requiredColumns,
         );
 
         if (data.length === 0) {
-            throw new BadRequestException(
-                'No valid data found to import. Please check file format and column names.',
-            );
+            throw new BadRequestException('No valid data found to import. Please check file format and column names.');
         }
 
         // 1. Resolve all companyNames to companyIds
@@ -536,17 +538,22 @@ export class SubLocationService {
 
         // 3. Build processing data
         const processedData: CreateSubLocationDto[] = [];
-        for (const row of data) {
+        const processingErrors: any[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
             try {
-                if (row.status) {
-                    this.excelUploadService.validateEnum(row.status as string, SubLocationStatus, 'Status');
-                }
+                const status = row.status ? this.excelUploadService.validateEnum(row.status as string, SubLocationStatus, 'Status') : SubLocationStatus.ACTIVE;
 
                 const companyId = companyMap.get(row.companyName?.toLowerCase());
-                if (!companyId) continue;
+                if (!companyId) {
+                    throw new Error(`Client Company not found: ${row.companyName}`);
+                }
 
                 const locationId = locationMap.get(`${companyId}_${row.locationName?.toLowerCase()}`);
-                if (!locationId) continue;
+                if (!locationId) {
+                    throw new Error(`Client Location not found: ${row.locationName} for Company: ${row.companyName}`);
+                }
 
                 processedData.push({
                     subLocationNo: row.subLocationNo,
@@ -555,22 +562,22 @@ export class SubLocationService {
                     companyId: companyId,
                     locationId: locationId,
                     address: row.address,
-                    status: row.status as SubLocationStatus,
+                    status: status as SubLocationStatus,
                     remark: row.remark,
                 });
             } catch (err) {
-                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
+                processingErrors.push({ row: i + 2, error: err.message });
             }
+        }
+
+        if (processedData.length === 0 && processingErrors.length > 0) {
+            throw new BadRequestException(`Validation Failed: ${processingErrors[0].error}`);
         }
 
         const result = await this.bulkCreate({ subLocations: processedData }, userId);
 
-        if (result.success === 0 && result.failed > 0) {
-            const firstError = result.errors?.[0]?.error || 'Unknown validation error';
-            throw new BadRequestException(
-                `Upload Failed: All ${result.failed} records failed validation. Example error: ${firstError}`,
-            );
-        }
+        result.errors = [...(result.errors || []), ...parseErrors, ...processingErrors];
+        result.failed += parseErrors.length + processingErrors.length;
 
         return result;
     }

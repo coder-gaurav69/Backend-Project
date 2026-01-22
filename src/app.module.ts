@@ -17,6 +17,7 @@ import { IpAddressModule } from './ip-address/ip-address.module';
 import { PdfModule } from './pdf/pdf.module';
 import { DemoModule } from './demo/demo.module';
 import { NotificationModule } from './notification/notification.module';
+import { TaskModule } from './task/task.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { AppController } from './app.controller';
@@ -58,6 +59,7 @@ import { AppService } from './app.service';
     PdfModule,
     DemoModule,
     NotificationModule,
+    TaskModule,
   ],
   controllers: [AppController],
   providers: [

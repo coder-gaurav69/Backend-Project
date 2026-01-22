@@ -382,25 +382,27 @@ export class TeamService {
         }
 
         const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        let totalInserted = 0;
         for (const chunk of chunks) {
             try {
-                await this.prisma.team.createMany({
+                const result = await this.prisma.team.createMany({
                     data: chunk,
                     skipDuplicates: true,
                 });
+                totalInserted += result.count;
             } catch (err) {
                 this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
                 errors.push({ error: 'Batch insert failed', details: err.message });
             }
         }
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.teams.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.teams.length} | Inserted Actual: ${totalInserted} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: dataToInsert.length,
-            failed: errors.length,
-            message: `Successfully processed ${dataToInsert.length} records.`,
+            success: totalInserted,
+            failed: dto.teams.length - totalInserted,
+            message: `Successfully inserted ${totalInserted} records.`,
             errors,
         };
     }
@@ -478,6 +480,8 @@ export class TeamService {
 
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
+        this.logger.log(`[UPLOAD] File: ${file?.originalname} | Size: ${file?.size}`);
+
         const columnMapping = {
             teamNo: ['teamno', 'teamnumber', 'no', 'number'],
             teamName: ['teamname', 'name', 'tname', 'team'],
@@ -495,19 +499,17 @@ export class TeamService {
 
         const requiredColumns = ['teamName'];
 
-        const { data, errors } = await this.excelUploadService.parseFile<any>(
+        const { data, errors: parseErrors } = await this.excelUploadService.parseFile<any>(
             file,
             columnMapping,
             requiredColumns,
         );
 
         if (data.length === 0) {
-            throw new BadRequestException(
-                'No valid data found to import. Please check file format and column names.',
-            );
+            throw new BadRequestException('No valid data found to import. Please check file format and column names.');
         }
 
-        // 1. Resolve all relation names in batches
+        // Resolve relations
         const groupNames = Array.from(new Set(data.filter(r => r.groupName).map(r => r.groupName)));
         const companyNames = Array.from(new Set(data.filter(r => r.companyName).map(r => r.companyName)));
         const locationNames = Array.from(new Set(data.filter(r => r.locationName).map(r => r.locationName)));
@@ -525,16 +527,26 @@ export class TeamService {
         const locationMap = new Map(dbLocations.map(l => [l.locationName.toLowerCase(), l.id]));
         const subLocationMap = new Map(dbSubLocations.map(s => [s.subLocationName.toLowerCase(), s.id]));
 
-        // 2. Build processing data
         const processedData: CreateTeamDto[] = [];
-        for (const row of data) {
+        const processingErrors: any[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
             try {
-                if (row.status) {
-                    this.excelUploadService.validateEnum(row.status as string, TeamStatus, 'Status');
-                }
-                if (row.loginMethod) {
-                    this.excelUploadService.validateEnum(row.loginMethod as string, LoginMethod, 'LoginMethod');
-                }
+                const status = row.status ? this.excelUploadService.validateEnum(row.status as string, TeamStatus, 'Status') : TeamStatus.ACTIVE;
+                const loginMethod = row.loginMethod ? this.excelUploadService.validateEnum(row.loginMethod as string, LoginMethod, 'LoginMethod') : LoginMethod.EMAIL;
+
+                const clientGroupId = row.groupName ? groupMap.get(row.groupName.toLowerCase()) : undefined;
+                if (row.groupName && !clientGroupId) throw new Error(`Client Group "${row.groupName}" not found`);
+
+                const companyId = row.companyName ? companyMap.get(row.companyName.toLowerCase()) : undefined;
+                if (row.companyName && !companyId) throw new Error(`Company "${row.companyName}" not found`);
+
+                const locationId = row.locationName ? locationMap.get(row.locationName.toLowerCase()) : undefined;
+                if (row.locationName && !locationId) throw new Error(`Location "${row.locationName}" not found`);
+
+                const subLocationId = row.subLocationName ? subLocationMap.get(row.subLocationName.toLowerCase()) : undefined;
+                if (row.subLocationName && !subLocationId) throw new Error(`Sub Location "${row.subLocationName}" not found`);
 
                 processedData.push({
                     teamNo: row.teamNo,
@@ -542,27 +554,27 @@ export class TeamService {
                     email: row.email,
                     phone: row.phone,
                     taskAssignPermission: String(row.taskAssignPermission).toLowerCase() === 'true',
-                    clientGroupId: row.groupName ? groupMap.get(row.groupName.toLowerCase()) : undefined,
-                    companyId: row.companyName ? companyMap.get(row.companyName.toLowerCase()) : undefined,
-                    locationId: row.locationName ? locationMap.get(row.locationName.toLowerCase()) : undefined,
-                    subLocationId: row.subLocationName ? subLocationMap.get(row.subLocationName.toLowerCase()) : undefined,
-                    status: row.status as TeamStatus,
-                    loginMethod: row.loginMethod as LoginMethod,
+                    clientGroupId,
+                    companyId,
+                    locationId,
+                    subLocationId,
+                    status: status as TeamStatus,
+                    loginMethod: loginMethod as LoginMethod,
                     remark: row.remark,
                 });
             } catch (err) {
-                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
+                processingErrors.push({ row: i + 2, error: err.message });
             }
+        }
+
+        if (processedData.length === 0 && processingErrors.length > 0) {
+            throw new BadRequestException(`Validation Failed: ${processingErrors[0].error}`);
         }
 
         const result = await this.bulkCreate({ teams: processedData }, userId);
 
-        if (result.success === 0 && result.failed > 0) {
-            const firstError = result.errors?.[0]?.error || 'Unknown validation error';
-            throw new BadRequestException(
-                `Upload Failed: All ${result.failed} records failed validation. Example error: ${firstError}`,
-            );
-        }
+        result.errors = [...(result.errors || []), ...parseErrors, ...processingErrors];
+        result.failed += parseErrors.length + processingErrors.length;
 
         return result;
     }

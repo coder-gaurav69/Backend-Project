@@ -36,6 +36,10 @@ export class CreateTaskDto {
     @IsOptional()
     @IsUUID()
     assignedTo?: string;
+
+    @IsOptional()
+    @IsUUID()
+    targetGroupId?: string;
 }
 
 export class UpdateTaskDto {
@@ -89,6 +93,10 @@ export class UpdateTaskDto {
 
     @IsOptional()
     @IsUUID()
+    targetGroupId?: string;
+
+    @IsOptional()
+    @IsUUID()
     workingBy?: string;
 }
 
@@ -112,6 +120,10 @@ export class FilterTaskDto {
     @IsOptional()
     @IsUUID()
     assignedTo?: string;
+
+    @IsOptional()
+    @IsUUID()
+    targetGroupId?: string;
 
     @IsOptional()
     @IsUUID()

@@ -371,25 +371,27 @@ export class ProjectService {
         }
 
         const chunks: any[][] = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        let totalInserted = 0;
         for (const chunk of chunks) {
             try {
-                await this.prisma.project.createMany({
+                const result = await this.prisma.project.createMany({
                     data: chunk,
                     skipDuplicates: true,
                 });
+                totalInserted += result.count;
             } catch (err) {
                 this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
                 errors.push({ error: 'Batch insert failed', details: err.message });
             }
         }
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.projects.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.projects.length} | Inserted Actual: ${totalInserted} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: dataToInsert.length,
-            failed: errors.length,
-            message: `Successfully processed ${dataToInsert.length} records.`,
+            success: totalInserted,
+            failed: dto.projects.length - totalInserted,
+            message: `Successfully inserted ${totalInserted} records.`,
             errors,
         };
     }
@@ -468,10 +470,12 @@ export class ProjectService {
 
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
+        this.logger.log(`[UPLOAD] File: ${file?.originalname} | Size: ${file?.size}`);
+
         const columnMapping = {
             projectNo: ['projectno', 'projectnumber'],
             projectName: ['projectname', 'name'],
-            subLocationName: ['sublocationname', 'clientsublocationname'], // Changed from subLocationId
+            subLocationName: ['sublocationname', 'clientsublocationname'],
             deadline: ['deadline', 'duedate', 'enddate'],
             priority: ['priority'],
             status: ['status'],
@@ -480,16 +484,14 @@ export class ProjectService {
 
         const requiredColumns = ['projectName', 'subLocationName'];
 
-        const { data, errors } = await this.excelUploadService.parseFile<any>(
+        const { data, errors: parseErrors } = await this.excelUploadService.parseFile<any>(
             file,
             columnMapping,
             requiredColumns,
         );
 
         if (data.length === 0) {
-            throw new BadRequestException(
-                'No valid data found to import. Please check file format and column names.',
-            );
+            throw new BadRequestException('No valid data found to import. Please check file format and column names.');
         }
 
         // 1. Resolve all subLocationNames to subLocationIds
@@ -502,40 +504,41 @@ export class ProjectService {
 
         // 2. Build processing data
         const processedData: CreateProjectDto[] = [];
-        for (const row of data) {
+        const processingErrors: any[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
             try {
-                if (row.status) {
-                    this.excelUploadService.validateEnum(row.status as string, ProjectStatus, 'Status');
-                }
-                if (row.priority) {
-                    this.excelUploadService.validateEnum(row.priority as string, ProjectPriority, 'Priority');
-                }
+                const status = row.status ? this.excelUploadService.validateEnum(row.status as string, ProjectStatus, 'Status') : ProjectStatus.ACTIVE;
+                const priority = row.priority ? this.excelUploadService.validateEnum(row.priority as string, ProjectPriority, 'Priority') : ProjectPriority.MEDIUM;
 
                 const subLocationId = subLocationMap.get(row.subLocationName?.toLowerCase());
-                if (!subLocationId) continue;
+                if (!subLocationId) {
+                    throw new Error(`Sub Location not found: ${row.subLocationName}`);
+                }
 
                 processedData.push({
                     projectNo: row.projectNo,
                     projectName: row.projectName,
                     subLocationId: subLocationId,
                     deadline: row.deadline,
-                    priority: row.priority as ProjectPriority,
-                    status: row.status as ProjectStatus,
+                    priority: priority as ProjectPriority,
+                    status: status as ProjectStatus,
                     remark: row.remark,
                 });
             } catch (err) {
-                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
+                processingErrors.push({ row: i + 2, error: err.message });
             }
+        }
+
+        if (processedData.length === 0 && processingErrors.length > 0) {
+            throw new BadRequestException(`Validation Failed: ${processingErrors[0].error}`);
         }
 
         const result = await this.bulkCreate({ projects: processedData }, userId);
 
-        if (result.success === 0 && result.failed > 0) {
-            const firstError = result.errors?.[0]?.error || 'Unknown validation error';
-            throw new BadRequestException(
-                `Upload Failed: All ${result.failed} records failed validation. Example error: ${firstError}`,
-            );
-        }
+        result.errors = [...(result.errors || []), ...parseErrors, ...processingErrors];
+        result.failed += parseErrors.length + processingErrors.length;
 
         return result;
     }

@@ -380,25 +380,27 @@ export class ClientLocationService {
         }
 
         const chunks = this.excelUploadService.chunk(dataToInsert, BATCH_SIZE);
+        let totalInserted = 0;
         for (const chunk of chunks) {
             try {
-                await this.prisma.clientLocation.createMany({
+                const result = await this.prisma.clientLocation.createMany({
                     data: chunk,
                     skipDuplicates: true,
                 });
+                totalInserted += result.count;
             } catch (err) {
                 this.logger.error(`[BATCH_INSERT_ERROR] ${err.message}`);
                 errors.push({ error: 'Batch insert failed', details: err.message });
             }
         }
 
-        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.locations.length} | Inserted Approx: ${dataToInsert.length} | Errors: ${errors.length}`);
+        this.logger.log(`[BULK_CREATE_COMPLETED] Processed: ${dto.locations.length} | Inserted Actual: ${totalInserted} | Errors: ${errors.length}`);
         await this.invalidateCache();
 
         return {
-            success: dataToInsert.length,
-            failed: errors.length,
-            message: `Successfully processed ${dataToInsert.length} records.`,
+            success: totalInserted,
+            failed: dto.locations.length - totalInserted,
+            message: `Successfully inserted ${totalInserted} records.`,
             errors,
         };
     }
@@ -476,6 +478,8 @@ export class ClientLocationService {
 
 
     async uploadExcel(file: Express.Multer.File, userId: string) {
+        this.logger.log(`[UPLOAD] File: ${file?.originalname} | Size: ${file?.size}`);
+
         const columnMapping = {
             locationNo: ['locationno', 'locationnumber', 'no', 'number'],
             locationName: ['locationname', 'name', 'lname', 'location'],
@@ -488,19 +492,17 @@ export class ClientLocationService {
 
         const requiredColumns = ['locationName', 'locationCode', 'companyName'];
 
-        const { data, errors } = await this.excelUploadService.parseFile<any>(
+        const { data, errors: parseErrors } = await this.excelUploadService.parseFile<any>(
             file,
             columnMapping,
             requiredColumns,
         );
 
         if (data.length === 0) {
-            throw new BadRequestException(
-                'No valid data found to import. Please check file format and column names.',
-            );
+            throw new BadRequestException('No valid data found to import. Please check file format and column names.');
         }
 
-        // 1. Resolve all companyNames to companyIds in one go
+        // 1. Resolve all companyNames to companyIds
         const companyNames = Array.from(new Set(data.filter(row => row.companyName).map(row => row.companyName)));
         const companies = await this.prisma.clientCompany.findMany({
             where: { companyName: { in: companyNames } },
@@ -510,16 +512,16 @@ export class ClientLocationService {
 
         // 2. Build processing data
         const processedData: CreateClientLocationDto[] = [];
-        for (const row of data) {
+        const processingErrors: any[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
             try {
-                if (row.status) {
-                    this.excelUploadService.validateEnum(row.status as string, LocationStatus, 'Status');
-                }
+                const status = row.status ? this.excelUploadService.validateEnum(row.status as string, LocationStatus, 'Status') : LocationStatus.ACTIVE;
 
                 const companyId = companyMap.get(row.companyName?.toLowerCase());
                 if (!companyId) {
-                    this.logger.warn(`[UPLOAD_WARN] Skipping row: Client Company not found: ${row.companyName}`);
-                    continue;
+                    throw new Error(`Client Company not found: ${row.companyName}`);
                 }
 
                 processedData.push({
@@ -528,22 +530,22 @@ export class ClientLocationService {
                     locationCode: row.locationCode,
                     companyId: companyId,
                     address: row.address,
-                    status: row.status as LocationStatus,
+                    status: status as LocationStatus,
                     remark: row.remark,
                 });
             } catch (err) {
-                this.logger.error(`[UPLOAD_ROW_ERROR] ${err.message}`);
+                processingErrors.push({ row: i + 2, error: err.message });
             }
+        }
+
+        if (processedData.length === 0 && processingErrors.length > 0) {
+            throw new BadRequestException(`Validation Failed: ${processingErrors[0].error}`);
         }
 
         const result = await this.bulkCreate({ locations: processedData }, userId);
 
-        if (result.success === 0 && result.failed > 0) {
-            const firstError = result.errors?.[0]?.error || 'Unknown validation error';
-            throw new BadRequestException(
-                `Upload Failed: All ${result.failed} records failed validation. Example error: ${firstError}`,
-            );
-        }
+        result.errors = [...(result.errors || []), ...parseErrors, ...processingErrors];
+        result.failed += parseErrors.length + processingErrors.length;
 
         return result;
     }

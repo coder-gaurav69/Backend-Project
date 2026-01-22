@@ -195,15 +195,15 @@ export class ExcelUploadService {
         return chunks;
     }
 
-    /**
-     * Validate enum value
-     */
-    validateEnum(value: string, enumObj: any, fieldName: string): void {
-        const validValues = Object.values(enumObj);
-        if (value && !validValues.includes(value)) {
+    validateEnum(value: string, enumObj: any, fieldName: string): string {
+        const validValues = Object.values(enumObj) as string[];
+        const upperVal = value.toUpperCase().trim();
+
+        if (value && !validValues.includes(upperVal)) {
             throw new Error(
                 `Invalid ${fieldName}: "${value}". Allowed: ${validValues.join(', ')}`,
             );
         }
+        return upperVal;
     }
 }
