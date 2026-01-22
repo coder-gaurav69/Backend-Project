@@ -11,8 +11,8 @@ import { Prisma } from '@prisma/client';
 export const buildMultiValueFilter = (field: string, value: string | undefined): any => {
     if (!value || typeof value !== 'string') return undefined;
 
-    // Split by comma, colon, or semicolon
-    const values = value.split(/[,\:;]/).map(v => v.trim()).filter(Boolean);
+    // Split by comma, colon, semicolon, or pipe
+    const values = value.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
 
     if (values.length === 0) return undefined;
 

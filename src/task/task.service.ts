@@ -42,39 +42,55 @@ export class TaskService {
         const andArray = where.AND as Array<Prisma.TaskWhereInput>;
 
         if (filter.search) {
-            const searchLower = filter.search.toLowerCase();
-            const orConditions: Prisma.TaskWhereInput[] = [
-                { taskTitle: { contains: filter.search, mode: 'insensitive' } },
-                { taskNo: { contains: filter.search, mode: 'insensitive' } },
-                { additionalNote: { contains: filter.search, mode: 'insensitive' } },
-                { remarkChat: { contains: filter.search, mode: 'insensitive' } },
-                { project: { projectName: { contains: filter.search, mode: 'insensitive' } } },
-                { assignee: { firstName: { contains: filter.search, mode: 'insensitive' } } },
-                { assignee: { lastName: { contains: filter.search, mode: 'insensitive' } } },
-                { creator: { firstName: { contains: filter.search, mode: 'insensitive' } } },
-                { worker: { firstName: { contains: filter.search, mode: 'insensitive' } } },
-            ];
+            const searchValues = filter.search.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
+            const searchOrConditions: Prisma.TaskWhereInput[] = [];
 
-            // Specific status matching
-            if ('pending'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ taskStatus: 'PENDING' });
-            if ('success'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ taskStatus: 'SUCCESS' });
-            if ('working'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ taskStatus: 'WORKING' });
-            if ('review'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ taskStatus: 'REVIEW' });
-            if ('hold'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ taskStatus: 'HOLD' });
+            for (const val of searchValues) {
+                const searchLower = val.toLowerCase();
+                const looksLikeCode = /^[A-Z]{1,}-\d+$/i.test(val) || /^TASK-\d+$/i.test(val);
 
-            andArray.push({ OR: orConditions });
+                const fieldOrConditions: Prisma.TaskWhereInput[] = [];
+
+                if (looksLikeCode) {
+                    fieldOrConditions.push({ taskNo: { equals: val, mode: 'insensitive' } });
+                    fieldOrConditions.push({ taskNo: { contains: val, mode: 'insensitive' } });
+                } else {
+                    fieldOrConditions.push({ taskTitle: { contains: val, mode: 'insensitive' } });
+                    fieldOrConditions.push({ taskNo: { contains: val, mode: 'insensitive' } });
+                }
+
+                fieldOrConditions.push({ additionalNote: { contains: val, mode: 'insensitive' } });
+                fieldOrConditions.push({ remarkChat: { contains: val, mode: 'insensitive' } });
+                fieldOrConditions.push({ project: { projectName: { contains: val, mode: 'insensitive' } } });
+                fieldOrConditions.push({ assignee: { firstName: { contains: val, mode: 'insensitive' } } });
+                fieldOrConditions.push({ assignee: { lastName: { contains: val, mode: 'insensitive' } } });
+                fieldOrConditions.push({ creator: { firstName: { contains: val, mode: 'insensitive' } } });
+                fieldOrConditions.push({ worker: { firstName: { contains: val, mode: 'insensitive' } } });
+
+                if ('pending'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'PENDING' });
+                if ('success'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'SUCCESS' });
+                if ('working'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'WORKING' });
+                if ('review'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'REVIEW' });
+                if ('hold'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'HOLD' });
+
+                searchOrConditions.push({ OR: fieldOrConditions });
+            }
+
+            if (searchOrConditions.length > 0) {
+                andArray.push({ OR: searchOrConditions });
+            }
         }
 
         if (filter.taskStatus) {
             const statusValues = typeof filter.taskStatus === 'string'
-                ? filter.taskStatus.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.taskStatus.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.taskStatus) ? filter.taskStatus : [filter.taskStatus];
             if (statusValues.length > 0) andArray.push({ taskStatus: { in: statusValues as any } });
         }
 
         if (filter.priority) {
             const priorityValues = typeof filter.priority === 'string'
-                ? filter.priority.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.priority.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.priority) ? filter.priority : [filter.priority];
             if (priorityValues.length > 0) andArray.push({ priority: { in: priorityValues as any } });
         }

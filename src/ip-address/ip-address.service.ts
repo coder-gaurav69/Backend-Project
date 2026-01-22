@@ -102,7 +102,7 @@ export class IpAddressService {
         // Handle Status Filter
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
-                ? filter.status.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.status) ? filter.status : [filter.status];
             if (statusValues.length > 0) andArray.push({ status: { in: statusValues as any } });
         }
@@ -117,26 +117,51 @@ export class IpAddressService {
         if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
 
         if (cleanedSearch) {
-            const orConditions: Prisma.IpAddressWhereInput[] = [
-                { ipAddressName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { ipAddress: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { ipNo: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { remark: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { subLocation: { subLocationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { location: { locationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { company: { companyName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { clientGroup: { groupName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-            ];
+            const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
+            const allSearchConditions: Prisma.IpAddressWhereInput[] = [];
 
-            const searchLower = cleanedSearch.toLowerCase();
-            if ('active'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'ACTIVE' as any });
-            }
-            if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'INACTIVE' as any });
+            for (const val of searchValues) {
+                const searchLower = val.toLowerCase();
+                const looksLikeIP = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(val);
+                const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
+
+                if (looksLikeIP) {
+                    allSearchConditions.push({ ipAddress: { equals: val } });
+                    allSearchConditions.push({ ipAddress: { contains: val } }); // Keep contains for partial matches if desired
+                } else if (looksLikeCode) {
+                    allSearchConditions.push({ ipNo: { equals: val } }); // Exact match for IP No
+                    allSearchConditions.push({ ipNo: { contains: val, mode: 'insensitive' } }); // Contains for partial matches
+                    allSearchConditions.push({ clientGroup: { groupCode: { equals: val } } });
+                    allSearchConditions.push({ clientGroup: { groupCode: { contains: val, mode: 'insensitive' } } });
+                    allSearchConditions.push({ company: { companyCode: { equals: val } } });
+                    allSearchConditions.push({ company: { companyCode: { contains: val, mode: 'insensitive' } } });
+                    allSearchConditions.push({ location: { locationCode: { equals: val } } });
+                    allSearchConditions.push({ location: { locationCode: { contains: val, mode: 'insensitive' } } });
+                    allSearchConditions.push({ subLocation: { subLocationCode: { equals: val } } });
+                    allSearchConditions.push({ subLocation: { subLocationCode: { contains: val, mode: 'insensitive' } } });
+                } else {
+                    allSearchConditions.push({ ipAddressName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ ipAddress: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ ipNo: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ clientGroup: { groupName: { contains: val, mode: 'insensitive' } } });
+                    allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
+                    allSearchConditions.push({ location: { locationName: { contains: val, mode: 'insensitive' } } });
+                    allSearchConditions.push({ subLocation: { subLocationName: { contains: val, mode: 'insensitive' } } });
+                }
+
+                allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+
+                if ('active'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'ACTIVE' as any });
+                }
+                if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'INACTIVE' as any });
+                }
             }
 
-            andArray.push({ OR: orConditions });
+            if (allSearchConditions.length > 0) {
+                andArray.push({ OR: allSearchConditions });
+            }
         }
 
         if (andArray.length === 0) delete where.AND;

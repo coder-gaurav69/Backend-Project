@@ -71,16 +71,13 @@ export class ClientGroupService {
 
         const andArray = where.AND as Array<Prisma.ClientGroupWhereInput>;
 
-        // Handle Status Filter (handle possible multi-select from UI)
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
-                ? filter.status.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.status) ? filter.status : [filter.status];
 
             if (statusValues.length > 0) {
-                andArray.push({
-                    status: { in: statusValues as any }
-                });
+                andArray.push({ status: { in: statusValues as any } });
             }
         }
 
@@ -91,26 +88,46 @@ export class ClientGroupService {
         if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
 
         if (cleanedSearch) {
-            const orConditions: Prisma.ClientGroupWhereInput[] = [
-                { groupName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { groupCode: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { groupNo: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { country: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { remark: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-            ];
+            const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
+            const allSearchConditions: Prisma.ClientGroupWhereInput[] = [];
 
-            const searchLower = cleanedSearch.toLowerCase();
-            if ('active'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'ACTIVE' as any });
-            }
-            if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'INACTIVE' as any });
+            for (const val of searchValues) {
+                const searchLower = val.toLowerCase();
+
+                // Check if value looks like a code (contains hyphen or is alphanumeric with specific pattern)
+                const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
+
+                if (looksLikeCode) {
+                    // For code-like values, use exact match OR contains for flexibility
+                    allSearchConditions.push({ groupCode: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupNo: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupCode: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupNo: { contains: val, mode: 'insensitive' } });
+                } else {
+                    // For text values, use contains
+                    allSearchConditions.push({ groupName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupCode: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupNo: { contains: val, mode: 'insensitive' } });
+                }
+
+                // Always search in country and remark
+                allSearchConditions.push({ country: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+
+                // Add status-based exact match conditions
+                if ('active'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'ACTIVE' as any });
+                }
+                if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'INACTIVE' as any });
+                }
             }
 
-            andArray.push({ OR: orConditions });
+            if (allSearchConditions.length > 0) {
+                andArray.push({ OR: allSearchConditions });
+            }
         }
 
-        // Clean up empty AND if necessary
         if (andArray.length === 0) delete where.AND;
 
         const [data, total] = await Promise.all([

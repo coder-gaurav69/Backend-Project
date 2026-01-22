@@ -104,7 +104,7 @@ export class TeamService {
         // Handle Status Filter
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
-                ? filter.status.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.status) ? filter.status : [filter.status];
             if (statusValues.length > 0) andArray.push({ status: { in: statusValues as any } });
         }
@@ -118,26 +118,39 @@ export class TeamService {
         if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
 
         if (cleanedSearch) {
-            const orConditions: Prisma.TeamWhereInput[] = [
-                { teamName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { teamNo: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { email: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { remark: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { subLocation: { subLocationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { location: { locationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { company: { companyName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { clientGroup: { groupName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-            ];
+            const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
+            const allSearchConditions: Prisma.TeamWhereInput[] = [];
 
-            const searchLower = cleanedSearch.toLowerCase();
-            if ('active'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'ACTIVE' as any });
-            }
-            if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'INACTIVE' as any });
+            for (const val of searchValues) {
+                const searchLower = val.toLowerCase();
+                const looksLikeCode = /^[A-Z]{1,}-\d+$/i.test(val) || /^U-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
+
+                if (looksLikeCode) {
+                    allSearchConditions.push({ teamNo: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ teamNo: { contains: val, mode: 'insensitive' } });
+                } else {
+                    allSearchConditions.push({ teamName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ teamNo: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ email: { contains: val, mode: 'insensitive' } });
+                }
+
+                allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ subLocation: { subLocationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ location: { locationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ clientGroup: { groupName: { contains: val, mode: 'insensitive' } } });
+
+                if ('active'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'ACTIVE' as any });
+                }
+                if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'INACTIVE' as any });
+                }
             }
 
-            andArray.push({ OR: orConditions });
+            if (allSearchConditions.length > 0) {
+                andArray.push({ OR: allSearchConditions });
+            }
         }
 
         if (andArray.length === 0) delete where.AND;

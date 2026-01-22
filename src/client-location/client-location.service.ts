@@ -90,7 +90,7 @@ export class ClientLocationService {
         // Handle Status Filter (handle possible multi-select from UI)
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
-                ? filter.status.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.status) ? filter.status : [filter.status];
 
             if (statusValues.length > 0) {
@@ -107,24 +107,40 @@ export class ClientLocationService {
         if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
 
         if (cleanedSearch) {
-            const orConditions: Prisma.ClientLocationWhereInput[] = [
-                { locationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { locationCode: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { locationNo: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { address: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { remark: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { company: { companyName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-            ];
+            const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
+            const allSearchConditions: Prisma.ClientLocationWhereInput[] = [];
 
-            const searchLower = cleanedSearch.toLowerCase();
-            if ('active'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'ACTIVE' as any });
-            }
-            if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
-                orConditions.push({ status: 'INACTIVE' as any });
+            for (const val of searchValues) {
+                const searchLower = val.toLowerCase();
+
+                const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
+
+                if (looksLikeCode) {
+                    allSearchConditions.push({ locationCode: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ locationNo: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ locationCode: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ locationNo: { contains: val, mode: 'insensitive' } });
+                } else {
+                    allSearchConditions.push({ locationName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ locationCode: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ locationNo: { contains: val, mode: 'insensitive' } });
+                }
+
+                allSearchConditions.push({ address: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
+
+                if ('active'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'ACTIVE' as any });
+                }
+                if ('inactive'.includes(searchLower) && searchLower.length >= 3) {
+                    allSearchConditions.push({ status: 'INACTIVE' as any });
+                }
             }
 
-            andArray.push({ OR: orConditions });
+            if (allSearchConditions.length > 0) {
+                andArray.push({ OR: allSearchConditions });
+            }
         }
 
         if (andArray.length === 0) delete where.AND;

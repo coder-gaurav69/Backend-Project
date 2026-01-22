@@ -84,7 +84,7 @@ export class ProjectService {
         // Handle Status Filter
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
-                ? filter.status.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.status) ? filter.status : [filter.status];
             if (statusValues.length > 0) andArray.push({ status: { in: statusValues as any } });
         }
@@ -92,7 +92,7 @@ export class ProjectService {
         // Handle Priority Filter
         if (filter?.priority) {
             const priorityValues = typeof filter.priority === 'string'
-                ? filter.priority.split(/[,\:;]/).map(v => v.trim()).filter(Boolean)
+                ? filter.priority.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
                 : Array.isArray(filter.priority) ? filter.priority : [filter.priority];
             if (priorityValues.length > 0) andArray.push({ priority: { in: priorityValues as any } });
         }
@@ -106,22 +106,35 @@ export class ProjectService {
         if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
 
         if (cleanedSearch) {
-            const orConditions: Prisma.ProjectWhereInput[] = [
-                { projectName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { projectNo: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { remark: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } },
-                { subLocation: { subLocationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } },
-                { subLocation: { location: { locationName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } } },
-                { subLocation: { location: { company: { companyName: { contains: cleanedSearch, mode: Prisma.QueryMode.insensitive } } } } },
-            ];
+            const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
+            const allSearchConditions: Prisma.ProjectWhereInput[] = [];
 
-            const searchLower = cleanedSearch.toLowerCase();
-            if ('active'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ status: 'ACTIVE' as any });
-            if ('inactive'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ status: 'INACTIVE' as any });
-            if ('completed'.includes(searchLower) && searchLower.length >= 3) orConditions.push({ status: 'COMPLETED' as any });
-            if (('on hold'.includes(searchLower) || 'onhold'.includes(searchLower)) && searchLower.length >= 3) orConditions.push({ status: 'ON_HOLD' as any });
+            for (const val of searchValues) {
+                const searchLower = val.toLowerCase();
+                const looksLikeCode = /^[A-Z]{1,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
-            andArray.push({ OR: orConditions });
+                if (looksLikeCode) {
+                    allSearchConditions.push({ projectNo: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ projectNo: { contains: val, mode: 'insensitive' } });
+                } else {
+                    allSearchConditions.push({ projectName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ projectNo: { contains: val, mode: 'insensitive' } });
+                }
+
+                allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ subLocation: { subLocationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ subLocation: { location: { locationName: { contains: val, mode: 'insensitive' } } } });
+                allSearchConditions.push({ subLocation: { location: { company: { companyName: { contains: val, mode: 'insensitive' } } } } });
+
+                if ('active'.includes(searchLower) && searchLower.length >= 3) allSearchConditions.push({ status: 'ACTIVE' as any });
+                if ('inactive'.includes(searchLower) && searchLower.length >= 3) allSearchConditions.push({ status: 'INACTIVE' as any });
+                if ('completed'.includes(searchLower) && searchLower.length >= 3) allSearchConditions.push({ status: 'COMPLETED' as any });
+                if (('on hold'.includes(searchLower) || 'onhold'.includes(searchLower)) && searchLower.length >= 3) allSearchConditions.push({ status: 'ON_HOLD' as any });
+            }
+
+            if (allSearchConditions.length > 0) {
+                andArray.push({ OR: allSearchConditions });
+            }
         }
 
         if (andArray.length === 0) delete where.AND;
