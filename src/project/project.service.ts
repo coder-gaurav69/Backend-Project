@@ -46,12 +46,15 @@ export class ProjectService {
         }
 
         const generatedProjectNo = await this.autoNumberService.generateProjectNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const project = await this.prisma.project.create({
             data: {
                 ...dto,
+                projectName: toTitleCase(dto.projectName),
                 deadline: dto.deadline ? new Date(dto.deadline) : null,
                 projectNo: dto.projectNo || generatedProjectNo,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 priority: dto.priority || ProjectPriority.MEDIUM,
                 status: dto.status || ProjectStatus.ACTIVE,
                 createdBy: userId,
@@ -80,6 +83,7 @@ export class ProjectService {
         };
 
         const andArray = where.AND as Array<Prisma.ProjectWhereInput>;
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Handle Status Filter
         if (filter?.status) {
@@ -101,9 +105,9 @@ export class ProjectService {
         if (filter?.locationId) andArray.push({ subLocation: { locationId: filter.locationId } });
         if (filter?.companyId) andArray.push({ subLocation: { location: { companyId: filter.companyId } } });
         if (filter?.clientGroupId) andArray.push({ subLocation: { location: { company: { groupId: filter.clientGroupId } } } });
-        if (filter?.projectName) andArray.push(buildMultiValueFilter('projectName', filter.projectName));
+        if (filter?.projectName) andArray.push(buildMultiValueFilter('projectName', toTitleCase(filter.projectName)));
         if (filter?.projectNo) andArray.push(buildMultiValueFilter('projectNo', filter.projectNo));
-        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
+        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', toTitleCase(filter.remark)));
 
         if (cleanedSearch) {
             const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -111,6 +115,7 @@ export class ProjectService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
                 const looksLikeCode = /^[A-Z]{1,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
                 if (looksLikeCode) {
@@ -118,13 +123,18 @@ export class ProjectService {
                     allSearchConditions.push({ projectNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     allSearchConditions.push({ projectName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ projectName: { contains: searchTitle, mode: 'insensitive' } });
                     allSearchConditions.push({ projectNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ subLocation: { subLocationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ subLocation: { subLocationName: { contains: searchTitle, mode: 'insensitive' } } });
                 allSearchConditions.push({ subLocation: { location: { locationName: { contains: val, mode: 'insensitive' } } } });
+                allSearchConditions.push({ subLocation: { location: { locationName: { contains: searchTitle, mode: 'insensitive' } } } });
                 allSearchConditions.push({ subLocation: { location: { company: { companyName: { contains: val, mode: 'insensitive' } } } } });
+                allSearchConditions.push({ subLocation: { location: { company: { companyName: { contains: searchTitle, mode: 'insensitive' } } } } });
 
                 if ('active'.includes(searchLower) && searchLower.length >= 3) allSearchConditions.push({ status: 'ACTIVE' as any });
                 if ('inactive'.includes(searchLower) && searchLower.length >= 3) allSearchConditions.push({ status: 'INACTIVE' as any });
@@ -139,13 +149,34 @@ export class ProjectService {
 
         if (andArray.length === 0) delete where.AND;
 
+        // --- Redis Caching ---
+        const isCacheable = !cleanedSearch && (!filter || Object.keys(filter).length === 0);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}:s${sortBy}:${sortOrder}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<PaginatedResponse<any>>(cacheKey);
+            if (cached) {
+                this.logger.log(`[CACHE_HIT] Project List - ${cacheKey}`);
+                return cached;
+            }
+        }
+
         const [data, total] = await Promise.all([
             this.prisma.project.findMany({
                 where,
                 skip: Number(skip),
                 take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
-                include: {
+                select: {
+                    id: true,
+                    projectNo: true,
+                    projectName: true,
+                    subLocationId: true,
+                    deadline: true,
+                    priority: true,
+                    status: true,
+                    remark: true,
+                    createdAt: true,
                     subLocation: {
                         select: {
                             id: true,
@@ -165,6 +196,9 @@ export class ProjectService {
                             },
                         },
                     },
+                    _count: {
+                        select: { tasks: true }
+                    }
                 },
             }),
             this.prisma.project.count({ where }),
@@ -177,7 +211,14 @@ export class ProjectService {
             companyName: item.subLocation?.location?.company?.companyName,
         }));
 
-        return new PaginatedResponse(mappedData, total, page, limit);
+        const response = new PaginatedResponse(mappedData, total, page, limit);
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+            this.logger.log(`[CACHE_MISS] Project List - Cached result: ${cacheKey}`);
+        }
+
+        return response;
     }
 
     async findActive(pagination: PaginationDto) {
@@ -220,6 +261,7 @@ export class ProjectService {
 
     async update(id: string, dto: UpdateProjectDto, userId: string) {
         const existing = await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         if (dto.subLocationId) {
             const subLocation = await this.prisma.subLocation.findFirst({
@@ -235,7 +277,9 @@ export class ProjectService {
             where: { id },
             data: {
                 ...dto,
+                projectName: dto.projectName ? toTitleCase(dto.projectName) : undefined,
                 deadline: dto.deadline ? new Date(dto.deadline) : undefined,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 updatedBy: userId,
             },
         });
@@ -278,6 +322,8 @@ export class ProjectService {
 
     async bulkCreate(dto: BulkCreateProjectDto, userId: string) {
         this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.projects.length} records`);
+        const { toTitleCase } = await import('../common/utils/string-helper');
+
         const errors: any[] = [];
 
         const allExisting = await this.prisma.project.findMany({
@@ -294,7 +340,8 @@ export class ProjectService {
 
         for (const projectDto of dto.projects) {
             try {
-                const projectName = projectDto.projectName?.trim() || 'Unnamed Project';
+                const projectName = toTitleCase(projectDto.projectName?.trim() || 'Unnamed Project');
+                const remark = projectDto.remark ? toTitleCase(projectDto.remark) : undefined;
 
                 // Unique number logic
                 let finalProjectNo = projectDto.projectNo?.trim();
@@ -311,6 +358,7 @@ export class ProjectService {
                 dataToInsert.push({
                     ...projectDto,
                     projectName,
+                    remark,
                     projectNo: finalProjectNo,
                     deadline: projectDto.deadline ? new Date(projectDto.deadline) : null,
                     priority: projectDto.priority || ProjectPriority.MEDIUM,

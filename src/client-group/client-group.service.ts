@@ -44,11 +44,15 @@ export class ClientGroupService {
 
         // Generate Group Number
         const generatedGroupNo = await this.autoNumberService.generateClientGroupNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const clientGroup = await this.prisma.clientGroup.create({
             data: {
                 ...dto,
+                groupName: toTitleCase(dto.groupName),
+                country: toTitleCase(dto.country),
                 groupNo: dto.groupNo || generatedGroupNo,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 status: dto.status || ClientGroupStatus.ACTIVE,
                 createdBy: userId,
             },
@@ -70,6 +74,7 @@ export class ClientGroupService {
         };
 
         const andArray = where.AND as Array<Prisma.ClientGroupWhereInput>;
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
@@ -81,11 +86,11 @@ export class ClientGroupService {
             }
         }
 
-        if (filter?.country) andArray.push(buildMultiValueFilter('country', filter.country));
-        if (filter?.groupName) andArray.push(buildMultiValueFilter('groupName', filter.groupName));
+        if (filter?.country) andArray.push(buildMultiValueFilter('country', toTitleCase(filter.country)));
+        if (filter?.groupName) andArray.push(buildMultiValueFilter('groupName', toTitleCase(filter.groupName)));
         if (filter?.groupNo) andArray.push(buildMultiValueFilter('groupNo', filter.groupNo));
         if (filter?.groupCode) andArray.push(buildMultiValueFilter('groupCode', filter.groupCode));
-        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
+        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', toTitleCase(filter.remark)));
 
         if (cleanedSearch) {
             const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -93,6 +98,7 @@ export class ClientGroupService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
 
                 // Check if value looks like a code (contains hyphen or is alphanumeric with specific pattern)
                 const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
@@ -106,13 +112,16 @@ export class ClientGroupService {
                 } else {
                     // For text values, use contains
                     allSearchConditions.push({ groupName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupName: { contains: searchTitle, mode: 'insensitive' } });
                     allSearchConditions.push({ groupCode: { contains: val, mode: 'insensitive' } });
                     allSearchConditions.push({ groupNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 // Always search in country and remark
                 allSearchConditions.push({ country: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ country: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: searchTitle, mode: 'insensitive' } });
 
                 // Add status-based exact match conditions
                 if ('active'.includes(searchLower) && searchLower.length >= 3) {
@@ -130,17 +139,49 @@ export class ClientGroupService {
 
         if (andArray.length === 0) delete where.AND;
 
+        // --- Redis Caching ---
+        const isCacheable = !cleanedSearch && (!filter || Object.keys(filter).length === 0);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}:s${sortBy}:${sortOrder}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<PaginatedResponse<any>>(cacheKey);
+            if (cached) {
+                this.logger.log(`[CACHE_HIT] ClientGroup List - ${cacheKey}`);
+                return cached;
+            }
+        }
+
         const [data, total] = await Promise.all([
             this.prisma.clientGroup.findMany({
                 where,
                 skip: Number(skip),
                 take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
+                select: {
+                    id: true,
+                    groupNo: true,
+                    groupName: true,
+                    groupCode: true,
+                    country: true,
+                    status: true,
+                    remark: true,
+                    createdAt: true,
+                    _count: {
+                        select: { companies: true, teams: true, groups: true }
+                    }
+                }
             }),
             this.prisma.clientGroup.count({ where }),
         ]);
 
-        return new PaginatedResponse(data, total, page, limit);
+        const response = new PaginatedResponse(data, total, page, limit);
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+            this.logger.log(`[CACHE_MISS] ClientGroup List - Cached result: ${cacheKey}`);
+        }
+
+        return response;
     }
 
     async findActive(pagination: PaginationDto) {
@@ -182,6 +223,7 @@ export class ClientGroupService {
 
     async update(id: string, dto: UpdateClientGroupDto, userId: string) {
         const existing = await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Check for duplicate group code if being updated
         if (dto.groupCode && dto.groupCode !== existing.groupCode) {
@@ -198,6 +240,9 @@ export class ClientGroupService {
             where: { id },
             data: {
                 ...dto,
+                groupName: dto.groupName ? toTitleCase(dto.groupName) : undefined,
+                country: dto.country ? toTitleCase(dto.country) : undefined,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 updatedBy: userId,
             },
         });
@@ -240,6 +285,7 @@ export class ClientGroupService {
 
     async bulkCreate(dto: BulkCreateClientGroupDto, userId: string) {
         this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.clientGroups.length} records`);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const errors: any[] = [];
 
@@ -260,7 +306,9 @@ export class ClientGroupService {
         // 2. Pre-process and validate in memory
         for (const clientGroupDto of dto.clientGroups) {
             try {
-                const groupName = clientGroupDto.groupName?.trim() || clientGroupDto.groupCode || 'Unnamed Group';
+                const groupName = toTitleCase(clientGroupDto.groupName?.trim() || clientGroupDto.groupCode || 'Unnamed Group');
+                const country = clientGroupDto.country ? toTitleCase(clientGroupDto.country) : undefined;
+                const remark = clientGroupDto.remark ? toTitleCase(clientGroupDto.remark) : undefined;
 
                 // Unique Code Logic
                 let finalGroupCode = clientGroupDto.groupCode?.trim() || `GC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -289,6 +337,8 @@ export class ClientGroupService {
                 dataToInsert.push({
                     ...clientGroupDto,
                     groupName,
+                    country,
+                    remark,
                     groupCode: finalGroupCode,
                     groupNo: finalGroupNo,
                     status: clientGroupDto.status || ClientGroupStatus.ACTIVE,

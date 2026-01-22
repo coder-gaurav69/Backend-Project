@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import ExcelJS from 'exceljs';
 import { PassThrough } from 'stream';
+import { toTitleCase } from '../utils/string-helper';
 
 /**
  * Reusable Excel/CSV Upload Service
@@ -164,7 +165,7 @@ export class ExcelUploadService {
                             rowData[key] = '';
                         }
                     } else if (val !== null && val !== undefined) {
-                        rowData[key] = val.toString().trim();
+                        rowData[key] = toTitleCase(val.toString());
                     } else {
                         rowData[key] = '';
                     }

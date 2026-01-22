@@ -1,7 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { NotificationStrategy } from './interfaces/notification-strategy.interface';
 import { EmailStrategy } from './strategies/email.strategy';
-import { SmsStrategy } from './strategies/sms.strategy';
 import { OtpChannel } from '../auth/dto/auth.dto';
 
 @Injectable()
@@ -11,10 +10,8 @@ export class NotificationService {
 
     constructor(
         private emailStrategy: EmailStrategy,
-        private smsStrategy: SmsStrategy,
     ) {
         this.strategies.set(OtpChannel.EMAIL, emailStrategy);
-        this.strategies.set(OtpChannel.SMS, smsStrategy);
     }
 
     async sendOtp(recipient: string, otp: string, channel: OtpChannel): Promise<void> {

@@ -57,11 +57,15 @@ export class ClientCompanyService {
 
         // Generate Company Number
         const generatedCompanyNo = await this.autoNumberService.generateCompanyNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const company = await this.prisma.clientCompany.create({
             data: {
                 ...dto,
+                companyName: toTitleCase(dto.companyName),
+                address: dto.address ? toTitleCase(dto.address) : undefined,
                 companyNo: dto.companyNo || generatedCompanyNo,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 status: dto.status || CompanyStatus.ACTIVE,
                 createdBy: userId,
             },
@@ -89,6 +93,7 @@ export class ClientCompanyService {
         };
 
         const andArray = where.AND as Array<Prisma.ClientCompanyWhereInput>;
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Handle Status Filter (handle possible multi-select from UI)
         if (filter?.status) {
@@ -104,10 +109,10 @@ export class ClientCompanyService {
         }
 
         if (filter?.groupId) andArray.push({ groupId: filter.groupId });
-        if (filter?.companyName) andArray.push(buildMultiValueFilter('companyName', filter.companyName));
+        if (filter?.companyName) andArray.push(buildMultiValueFilter('companyName', toTitleCase(filter.companyName)));
         if (filter?.companyNo) andArray.push(buildMultiValueFilter('companyNo', filter.companyNo));
         if (filter?.companyCode) andArray.push(buildMultiValueFilter('companyCode', filter.companyCode));
-        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
+        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', toTitleCase(filter.remark)));
 
         if (cleanedSearch) {
             const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -115,6 +120,7 @@ export class ClientCompanyService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
 
                 const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
@@ -125,13 +131,17 @@ export class ClientCompanyService {
                     allSearchConditions.push({ companyNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     allSearchConditions.push({ companyName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ companyName: { contains: searchTitle, mode: 'insensitive' } });
                     allSearchConditions.push({ companyCode: { contains: val, mode: 'insensitive' } });
                     allSearchConditions.push({ companyNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 allSearchConditions.push({ address: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ address: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ group: { groupName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ group: { groupName: { contains: searchTitle, mode: 'insensitive' } } });
 
                 if ('active'.includes(searchLower) && searchLower.length >= 3) {
                     allSearchConditions.push({ status: 'ACTIVE' as any });
@@ -148,13 +158,34 @@ export class ClientCompanyService {
 
         if (andArray.length === 0) delete where.AND;
 
+        // --- Redis Caching ---
+        const isCacheable = !cleanedSearch && (!filter || Object.keys(filter).length === 0);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}:s${sortBy}:${sortOrder}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<PaginatedResponse<any>>(cacheKey);
+            if (cached) {
+                this.logger.log(`[CACHE_HIT] ClientCompany List - ${cacheKey}`);
+                return cached;
+            }
+        }
+
         const [data, total] = await Promise.all([
             this.prisma.clientCompany.findMany({
                 where,
                 skip: Number(skip),
                 take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
-                include: {
+                select: {
+                    id: true,
+                    companyNo: true,
+                    companyName: true,
+                    companyCode: true,
+                    address: true,
+                    status: true,
+                    remark: true,
+                    createdAt: true,
+                    groupId: true,
                     group: {
                         select: {
                             id: true,
@@ -162,6 +193,9 @@ export class ClientCompanyService {
                             groupCode: true,
                         },
                     },
+                    _count: {
+                        select: { locations: true, teams: true, groups: true }
+                    }
                 },
             }),
             this.prisma.clientCompany.count({ where }),
@@ -173,7 +207,14 @@ export class ClientCompanyService {
             groupName: item.group?.groupName, // Flattened for table column accessor
         }));
 
-        return new PaginatedResponse(mappedData, total, page, limit);
+        const response = new PaginatedResponse(mappedData, total, page, limit);
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+            this.logger.log(`[CACHE_MISS] ClientCompany List - Cached result: ${cacheKey}`);
+        }
+
+        return response;
     }
 
     async findActive(pagination: PaginationDto) {
@@ -222,6 +263,7 @@ export class ClientCompanyService {
 
     async update(id: string, dto: UpdateClientCompanyDto, userId: string) {
         const existing = await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Check for duplicate company code if being updated
         if (dto.companyCode && dto.companyCode !== existing.companyCode) {
@@ -249,6 +291,9 @@ export class ClientCompanyService {
             where: { id },
             data: {
                 ...dto,
+                companyName: dto.companyName ? toTitleCase(dto.companyName) : undefined,
+                address: dto.address ? toTitleCase(dto.address) : undefined,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 updatedBy: userId,
             },
         });
@@ -291,6 +336,8 @@ export class ClientCompanyService {
 
     async bulkCreate(dto: BulkCreateClientCompanyDto, userId: string) {
         this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.companies.length} records`);
+        const { toTitleCase } = await import('../common/utils/string-helper');
+
         const errors: any[] = [];
 
         // 1. Fetch current data for uniqueness
@@ -310,7 +357,9 @@ export class ClientCompanyService {
         // 2. Pre-process in memory
         for (const companyDto of dto.companies) {
             try {
-                const companyName = companyDto.companyName?.trim() || companyDto.companyCode || 'Unnamed Company';
+                const companyName = toTitleCase(companyDto.companyName?.trim() || companyDto.companyCode || 'Unnamed Company');
+                const address = companyDto.address ? toTitleCase(companyDto.address) : undefined;
+                const remark = companyDto.remark ? toTitleCase(companyDto.remark) : undefined;
 
                 // Unique code logic
                 let finalCompanyCode = companyDto.companyCode?.trim() || `COMP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -339,6 +388,8 @@ export class ClientCompanyService {
                 dataToInsert.push({
                     ...companyDto,
                     companyName,
+                    address,
+                    remark,
                     companyCode: finalCompanyCode,
                     companyNo: finalCompanyNo,
                     status: companyDto.status || CompanyStatus.ACTIVE,

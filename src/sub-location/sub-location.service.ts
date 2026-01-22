@@ -54,13 +54,17 @@ export class SubLocationService {
         }
 
         const generatedSubLocationNo = await this.autoNumberService.generateSubLocationNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const subLocation = await this.prisma.subLocation.create({
             data: {
                 ...dto,
+                subLocationName: toTitleCase(dto.subLocationName),
+                address: dto.address ? toTitleCase(dto.address) : undefined,
                 companyId: dto.companyId || location.companyId, // Ensure companyId is set
                 subLocationNo: dto.subLocationNo || generatedSubLocationNo,
                 status: dto.status || SubLocationStatus.ACTIVE,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 createdBy: userId,
             },
         });
@@ -87,6 +91,7 @@ export class SubLocationService {
         };
 
         const andArray = where.AND as Array<Prisma.SubLocationWhereInput>;
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Handle Status Filter (handle possible multi-select from UI)
         if (filter?.status) {
@@ -103,10 +108,10 @@ export class SubLocationService {
 
         if (filter?.companyId) andArray.push({ companyId: filter.companyId });
         if (filter?.locationId) andArray.push({ locationId: filter.locationId });
-        if (filter?.subLocationName) andArray.push(buildMultiValueFilter('subLocationName', filter.subLocationName));
+        if (filter?.subLocationName) andArray.push(buildMultiValueFilter('subLocationName', toTitleCase(filter.subLocationName)));
         if (filter?.subLocationNo) andArray.push(buildMultiValueFilter('subLocationNo', filter.subLocationNo));
         if (filter?.subLocationCode) andArray.push(buildMultiValueFilter('subLocationCode', filter.subLocationCode));
-        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
+        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', toTitleCase(filter.remark)));
 
         if (cleanedSearch) {
             const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -114,6 +119,7 @@ export class SubLocationService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
                 const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
                 if (looksLikeCode) {
@@ -123,14 +129,19 @@ export class SubLocationService {
                     allSearchConditions.push({ subLocationNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     allSearchConditions.push({ subLocationName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ subLocationName: { contains: searchTitle, mode: 'insensitive' } });
                     allSearchConditions.push({ subLocationCode: { contains: val, mode: 'insensitive' } });
                     allSearchConditions.push({ subLocationNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 allSearchConditions.push({ address: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ address: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ location: { locationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ location: { locationName: { contains: searchTitle, mode: 'insensitive' } } });
                 allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ company: { companyName: { contains: searchTitle, mode: 'insensitive' } } });
 
                 if ('active'.includes(searchLower) && searchLower.length >= 3) {
                     allSearchConditions.push({ status: 'ACTIVE' as any });
@@ -147,13 +158,35 @@ export class SubLocationService {
 
         if (andArray.length === 0) delete where.AND;
 
+        // --- Redis Caching ---
+        const isCacheable = !cleanedSearch && (!filter || Object.keys(filter).length === 0);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}:s${sortBy}:${sortOrder}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<PaginatedResponse<any>>(cacheKey);
+            if (cached) {
+                this.logger.log(`[CACHE_HIT] SubLocation List - ${cacheKey}`);
+                return cached;
+            }
+        }
+
         const [data, total] = await Promise.all([
             this.prisma.subLocation.findMany({
                 where,
                 skip: Number(skip),
                 take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
-                include: {
+                select: {
+                    id: true,
+                    subLocationNo: true,
+                    subLocationName: true,
+                    subLocationCode: true,
+                    address: true,
+                    status: true,
+                    remark: true,
+                    createdAt: true,
+                    companyId: true,
+                    locationId: true,
                     company: {
                         select: {
                             id: true,
@@ -168,6 +201,9 @@ export class SubLocationService {
                             locationCode: true,
                         },
                     },
+                    _count: {
+                        select: { projects: true, teams: true, groups: true }
+                    }
                 },
             }),
             this.prisma.subLocation.count({ where }),
@@ -181,7 +217,14 @@ export class SubLocationService {
             companyName: item.company?.companyName,
         }));
 
-        return new PaginatedResponse(mappedData, total, page, limit);
+        const response = new PaginatedResponse(mappedData, total, page, limit);
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+            this.logger.log(`[CACHE_MISS] SubLocation List - Cached result: ${cacheKey}`);
+        }
+
+        return response;
     }
 
     async findActive(pagination: PaginationDto) {
@@ -220,6 +263,7 @@ export class SubLocationService {
 
     async update(id: string, dto: UpdateSubLocationDto, userId: string) {
         const existing = await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         if (dto.subLocationCode && dto.subLocationCode !== existing.subLocationCode) {
             const duplicate = await this.prisma.subLocation.findUnique({
@@ -245,6 +289,9 @@ export class SubLocationService {
             where: { id },
             data: {
                 ...dto,
+                subLocationName: dto.subLocationName ? toTitleCase(dto.subLocationName) : undefined,
+                address: dto.address ? toTitleCase(dto.address) : undefined,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 updatedBy: userId,
             },
         });
@@ -287,6 +334,8 @@ export class SubLocationService {
 
     async bulkCreate(dto: BulkCreateSubLocationDto, userId: string) {
         this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.subLocations.length} records`);
+        const { toTitleCase } = await import('../common/utils/string-helper');
+
         const errors: any[] = [];
 
         const allExisting = await this.prisma.subLocation.findMany({
@@ -304,7 +353,9 @@ export class SubLocationService {
 
         for (const subLocationDto of dto.subLocations) {
             try {
-                const subLocationName = subLocationDto.subLocationName?.trim() || subLocationDto.subLocationCode || 'Unnamed Sub Location';
+                const subLocationName = toTitleCase(subLocationDto.subLocationName?.trim() || subLocationDto.subLocationCode || 'Unnamed Sub Location');
+                const address = subLocationDto.address ? toTitleCase(subLocationDto.address) : undefined;
+                const remark = subLocationDto.remark ? toTitleCase(subLocationDto.remark) : undefined;
 
                 // Unique code logic
                 let finalSubLocationCode = subLocationDto.subLocationCode?.trim() || `SUBLOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -333,6 +384,8 @@ export class SubLocationService {
                 dataToInsert.push({
                     ...subLocationDto,
                     subLocationName,
+                    address,
+                    remark,
                     subLocationCode: finalSubLocationCode,
                     subLocationNo: finalSubLocationNo,
                     status: subLocationDto.status || SubLocationStatus.ACTIVE,

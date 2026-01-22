@@ -1,8 +1,7 @@
 import { IsEmail, IsString, MinLength, IsOptional, IsEnum } from 'class-validator';
 
 export enum OtpChannel {
-    EMAIL = 'EMAIL',
-    SMS = 'SMS'
+    EMAIL = 'EMAIL'
 }
 
 export class RegisterDto {

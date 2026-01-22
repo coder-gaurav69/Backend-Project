@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import compression from 'compression';
 import { Logger } from '@nestjs/common';
 
 async function bootstrap() {
@@ -15,10 +16,24 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   // Security Headers
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", "https:", "http://localhost:*"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }));
+
+  // Compression for faster API responses
+  app.use(compression());
 
   // Cookie Parser
-  app.use(cookieParser());
+  app.use(cookieParser(configService.get('COOKIE_SECRET', 'hrms-secret')));
 
   // CORS Configuration
   app.enableCors({
@@ -31,6 +46,7 @@ async function bootstrap() {
       'X-Requested-With',
       'X-Client-Host',
       'X-User-Agent',
+      'Accept',
     ],
   });
 

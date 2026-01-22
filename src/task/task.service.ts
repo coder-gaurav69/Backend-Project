@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutoNumberService } from '../common/services/auto-number.service';
+import { RedisService } from '../redis/redis.service';
 import { CreateTaskDto, UpdateTaskDto, FilterTaskDto } from './dto/task.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { Prisma, TaskStatus } from '@prisma/client';
@@ -8,18 +9,24 @@ import { Prisma, TaskStatus } from '@prisma/client';
 @Injectable()
 export class TaskService {
     private readonly logger = new Logger(TaskService.name);
+    private readonly CACHE_TTL = 300; // 5 minutes
+    private readonly CACHE_KEY = 'tasks';
 
     constructor(
         private prisma: PrismaService,
         private autoNumberService: AutoNumberService,
+        private redisService: RedisService,
     ) { }
 
     async create(dto: CreateTaskDto, userId: string) {
         const taskNo = await this.autoNumberService.generateTaskNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
-        return this.prisma.task.create({
+        const task = await this.prisma.task.create({
             data: {
                 ...dto,
+                taskTitle: toTitleCase(dto.taskTitle),
+                additionalNote: dto.additionalNote ? toTitleCase(dto.additionalNote) : undefined,
                 taskNo,
                 createdBy: userId,
             },
@@ -29,6 +36,9 @@ export class TaskService {
                 creator: true,
             },
         });
+
+        await this.invalidateCache();
+        return task;
     }
 
     async findAll(pagination: PaginationDto, filter: FilterTaskDto) {
@@ -40,6 +50,7 @@ export class TaskService {
         };
 
         const andArray = where.AND as Array<Prisma.TaskWhereInput>;
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         if (filter.search) {
             const searchValues = filter.search.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -47,6 +58,7 @@ export class TaskService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
                 const looksLikeCode = /^[A-Z]{1,}-\d+$/i.test(val) || /^TASK-\d+$/i.test(val);
 
                 const fieldOrConditions: Prisma.TaskWhereInput[] = [];
@@ -56,12 +68,16 @@ export class TaskService {
                     fieldOrConditions.push({ taskNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     fieldOrConditions.push({ taskTitle: { contains: val, mode: 'insensitive' } });
+                    fieldOrConditions.push({ taskTitle: { contains: searchTitle, mode: 'insensitive' } });
                     fieldOrConditions.push({ taskNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 fieldOrConditions.push({ additionalNote: { contains: val, mode: 'insensitive' } });
+                fieldOrConditions.push({ additionalNote: { contains: searchTitle, mode: 'insensitive' } });
                 fieldOrConditions.push({ remarkChat: { contains: val, mode: 'insensitive' } });
+                fieldOrConditions.push({ remarkChat: { contains: searchTitle, mode: 'insensitive' } });
                 fieldOrConditions.push({ project: { projectName: { contains: val, mode: 'insensitive' } } });
+                fieldOrConditions.push({ project: { projectName: { contains: searchTitle, mode: 'insensitive' } } });
                 fieldOrConditions.push({ assignee: { firstName: { contains: val, mode: 'insensitive' } } });
                 fieldOrConditions.push({ assignee: { lastName: { contains: val, mode: 'insensitive' } } });
                 fieldOrConditions.push({ creator: { firstName: { contains: val, mode: 'insensitive' } } });
@@ -95,23 +111,21 @@ export class TaskService {
             if (priorityValues.length > 0) andArray.push({ priority: { in: priorityValues as any } });
         }
 
-        if (filter.projectId) {
-            andArray.push({ projectId: filter.projectId });
-        }
-
-        if (filter.assignedTo) {
-            andArray.push({ assignedTo: filter.assignedTo });
-        }
-
-        if (filter.createdBy) {
-            andArray.push({ createdBy: filter.createdBy });
-        }
-
-        if (filter.workingBy) {
-            andArray.push({ workingBy: filter.workingBy });
-        }
+        if (filter.projectId) andArray.push({ projectId: filter.projectId });
+        if (filter.assignedTo) andArray.push({ assignedTo: filter.assignedTo });
+        if (filter.createdBy) andArray.push({ createdBy: filter.createdBy });
+        if (filter.workingBy) andArray.push({ workingBy: filter.workingBy });
 
         if (andArray.length === 0) delete where.AND;
+
+        // --- Redis Caching ---
+        const isCacheable = !filter.search && (!filter || Object.keys(filter).length <= 1);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<any>(cacheKey);
+            if (cached) return cached;
+        }
 
         const [data, total] = await Promise.all([
             this.prisma.task.findMany({
@@ -119,17 +133,33 @@ export class TaskService {
                 skip,
                 take: limit,
                 orderBy: { creatingTime: 'desc' },
-                include: {
-                    project: true,
-                    assignee: true,
-                    creator: true,
-                    worker: true,
+                select: {
+                    id: true,
+                    taskNo: true,
+                    taskTitle: true,
+                    taskStatus: true,
+                    priority: true,
+                    creatingTime: true,
+                    deadline: true,
+                    projectId: true,
+                    project: {
+                        select: { id: true, projectName: true, projectNo: true }
+                    },
+                    assignee: {
+                        select: { id: true, firstName: true, lastName: true, email: true }
+                    },
+                    creator: {
+                        select: { id: true, firstName: true, lastName: true, email: true }
+                    },
+                    worker: {
+                        select: { id: true, firstName: true, lastName: true, email: true }
+                    }
                 },
             }),
             this.prisma.task.count({ where }),
         ]);
 
-        return {
+        const response = {
             data,
             meta: {
                 total,
@@ -138,6 +168,12 @@ export class TaskService {
                 totalPages: Math.ceil(total / limit),
             },
         };
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+        }
+
+        return response;
     }
 
     async findById(id: string) {
@@ -160,11 +196,15 @@ export class TaskService {
 
     async update(id: string, dto: UpdateTaskDto, userId: string) {
         await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
-        return this.prisma.task.update({
+        const updated = await this.prisma.task.update({
             where: { id },
             data: {
                 ...dto,
+                taskTitle: dto.taskTitle ? toTitleCase(dto.taskTitle) : undefined,
+                additionalNote: dto.additionalNote ? toTitleCase(dto.additionalNote) : undefined,
+                remarkChat: dto.remarkChat ? toTitleCase(dto.remarkChat) : undefined,
             },
             include: {
                 project: true,
@@ -173,10 +213,19 @@ export class TaskService {
                 worker: true,
             },
         });
+
+        await this.invalidateCache();
+        return updated;
     }
 
     async delete(id: string) {
         await this.findById(id);
-        return this.prisma.task.delete({ where: { id } });
+        const deleted = await this.prisma.task.delete({ where: { id } });
+        await this.invalidateCache();
+        return deleted;
+    }
+
+    private async invalidateCache() {
+        await this.redisService.deleteCachePattern(`${this.CACHE_KEY}:*`);
     }
 }

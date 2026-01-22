@@ -54,11 +54,15 @@ export class ClientLocationService {
         }
 
         const generatedLocationNo = await this.autoNumberService.generateLocationNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const location = await this.prisma.clientLocation.create({
             data: {
                 ...dto,
+                locationName: toTitleCase(dto.locationName),
+                address: dto.address ? toTitleCase(dto.address) : undefined,
                 locationNo: dto.locationNo || generatedLocationNo,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 status: dto.status || LocationStatus.ACTIVE,
                 createdBy: userId,
             },
@@ -86,6 +90,7 @@ export class ClientLocationService {
         };
 
         const andArray = where.AND as Array<Prisma.ClientLocationWhereInput>;
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Handle Status Filter (handle possible multi-select from UI)
         if (filter?.status) {
@@ -101,10 +106,10 @@ export class ClientLocationService {
         }
 
         if (filter?.companyId) andArray.push({ companyId: filter.companyId });
-        if (filter?.locationName) andArray.push(buildMultiValueFilter('locationName', filter.locationName));
+        if (filter?.locationName) andArray.push(buildMultiValueFilter('locationName', toTitleCase(filter.locationName)));
         if (filter?.locationNo) andArray.push(buildMultiValueFilter('locationNo', filter.locationNo));
         if (filter?.locationCode) andArray.push(buildMultiValueFilter('locationCode', filter.locationCode));
-        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
+        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', toTitleCase(filter.remark)));
 
         if (cleanedSearch) {
             const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -112,6 +117,7 @@ export class ClientLocationService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
 
                 const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
@@ -122,13 +128,17 @@ export class ClientLocationService {
                     allSearchConditions.push({ locationNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     allSearchConditions.push({ locationName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ locationName: { contains: searchTitle, mode: 'insensitive' } });
                     allSearchConditions.push({ locationCode: { contains: val, mode: 'insensitive' } });
                     allSearchConditions.push({ locationNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 allSearchConditions.push({ address: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ address: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ company: { companyName: { contains: searchTitle, mode: 'insensitive' } } });
 
                 if ('active'.includes(searchLower) && searchLower.length >= 3) {
                     allSearchConditions.push({ status: 'ACTIVE' as any });
@@ -145,13 +155,34 @@ export class ClientLocationService {
 
         if (andArray.length === 0) delete where.AND;
 
+        // --- Redis Caching ---
+        const isCacheable = !cleanedSearch && (!filter || Object.keys(filter).length === 0);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}:s${sortBy}:${sortOrder}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<PaginatedResponse<any>>(cacheKey);
+            if (cached) {
+                this.logger.log(`[CACHE_HIT] ClientLocation List - ${cacheKey}`);
+                return cached;
+            }
+        }
+
         const [data, total] = await Promise.all([
             this.prisma.clientLocation.findMany({
                 where,
                 skip: Number(skip),
                 take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
-                include: {
+                select: {
+                    id: true,
+                    locationNo: true,
+                    locationName: true,
+                    locationCode: true,
+                    address: true,
+                    status: true,
+                    remark: true,
+                    createdAt: true,
+                    companyId: true,
                     company: {
                         select: {
                             id: true,
@@ -159,6 +190,9 @@ export class ClientLocationService {
                             companyCode: true,
                         },
                     },
+                    _count: {
+                        select: { subLocations: true, teams: true, groups: true }
+                    }
                 },
             }),
             this.prisma.clientLocation.count({ where }),
@@ -170,7 +204,14 @@ export class ClientLocationService {
             companyName: item.company?.companyName, // Flattened for table column accessor
         }));
 
-        return new PaginatedResponse(mappedData, total, page, limit);
+        const response = new PaginatedResponse(mappedData, total, page, limit);
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+            this.logger.log(`[CACHE_MISS] ClientLocation List - Cached result: ${cacheKey}`);
+        }
+
+        return response;
     }
 
     async findActive(pagination: PaginationDto) {
@@ -205,6 +246,7 @@ export class ClientLocationService {
 
     async update(id: string, dto: UpdateClientLocationDto, userId: string) {
         const existing = await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         if (dto.locationCode && dto.locationCode !== existing.locationCode) {
             const duplicate = await this.prisma.clientLocation.findUnique({
@@ -230,6 +272,9 @@ export class ClientLocationService {
             where: { id },
             data: {
                 ...dto,
+                locationName: dto.locationName ? toTitleCase(dto.locationName) : undefined,
+                address: dto.address ? toTitleCase(dto.address) : undefined,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 updatedBy: userId,
             },
         });
@@ -272,6 +317,8 @@ export class ClientLocationService {
 
     async bulkCreate(dto: BulkCreateClientLocationDto, userId: string) {
         this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.locations.length} records`);
+        const { toTitleCase } = await import('../common/utils/string-helper');
+
         const errors: any[] = [];
 
         const allExisting = await this.prisma.clientLocation.findMany({
@@ -289,7 +336,9 @@ export class ClientLocationService {
 
         for (const locationDto of dto.locations) {
             try {
-                const locationName = locationDto.locationName?.trim() || locationDto.locationCode || 'Unnamed Location';
+                const locationName = toTitleCase(locationDto.locationName?.trim() || locationDto.locationCode || 'Unnamed Location');
+                const address = locationDto.address ? toTitleCase(locationDto.address) : undefined;
+                const remark = locationDto.remark ? toTitleCase(locationDto.remark) : undefined;
 
                 // Unique code logic
                 let finalLocationCode = locationDto.locationCode?.trim() || `LOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -318,6 +367,8 @@ export class ClientLocationService {
                 dataToInsert.push({
                     ...locationDto,
                     locationName,
+                    address,
+                    remark,
                     locationCode: finalLocationCode,
                     locationNo: finalLocationNo,
                     status: locationDto.status || LocationStatus.ACTIVE,

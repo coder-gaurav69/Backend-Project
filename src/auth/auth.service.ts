@@ -40,12 +40,8 @@ export class AuthService {
             throw new ConflictException('Email already registered');
         }
 
-        // Default to EMAIL if not specified
-        const channel = dto.otpChannel || OtpChannel.EMAIL;
-
-        if (channel === OtpChannel.SMS && !dto.phoneNumber) {
-            throw new BadRequestException('Phone number is required for SMS OTP');
-        }
+        // Default to EMAIL
+        const channel = OtpChannel.EMAIL;
 
         // Store registration data locally (Redis) instead of creating user
         const hashedPassword = await bcrypt.hash(
@@ -67,11 +63,11 @@ export class AuthService {
         const otp = this.generateOTP();
         await this.redisService.setOTP(dto.email, otp, ttl);
 
-        const recipient = channel === OtpChannel.SMS ? dto.phoneNumber! : dto.email;
+        const recipient = dto.email;
         await this.notificationService.sendOtp(recipient, otp, channel);
 
         return {
-            message: `OTP sent to ${channel === OtpChannel.SMS ? 'phone' : 'email'}. Please verify to complete registration.`,
+            message: `OTP sent to email. Please verify to complete registration.`,
             email: dto.email,
             channel,
         };
@@ -140,9 +136,22 @@ export class AuthService {
             // OTP is disabled - skip OTP flow and proceed directly to login
             this.logger.log(`OTP disabled - Direct login for ${user.email}`);
 
-            // Strict IP Check (still enforced even without OTP)
+            // Enhanced IP Check (User-specific + Global Whitelist)
             const allowedIps = user.allowedIps || [];
-            if (!allowedIps.includes(ipAddress)) {
+            const isUserAllowed = allowedIps.includes(ipAddress);
+
+            let isGloballyAllowed = false;
+            if (!isUserAllowed) {
+                const globalIp = await this.prisma.ipAddress.findFirst({
+                    where: {
+                        ipAddress: ipAddress,
+                        status: 'ACTIVE',
+                    },
+                });
+                isGloballyAllowed = !!globalIp;
+            }
+
+            if (!isUserAllowed && !isGloballyAllowed) {
                 this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
                 throw new UnauthorizedException('Access denied. Unrecognized IP address.');
             }
@@ -196,9 +205,22 @@ export class AuthService {
             throw new UnauthorizedException('User not found');
         }
 
-        // Strict IP Check (always enforced)
+        // Enhanced IP Check (User-specific + Global Whitelist)
         const allowedIps = user.allowedIps || [];
-        if (!allowedIps.includes(ipAddress)) {
+        const isUserAllowed = allowedIps.includes(ipAddress);
+
+        let isGloballyAllowed = false;
+        if (!isUserAllowed) {
+            const globalIp = await this.prisma.ipAddress.findFirst({
+                where: {
+                    ipAddress: ipAddress,
+                    status: 'ACTIVE',
+                },
+            });
+            isGloballyAllowed = !!globalIp;
+        }
+
+        if (!isUserAllowed && !isGloballyAllowed) {
             this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
             throw new UnauthorizedException('Access denied. Unrecognized IP address.');
         }

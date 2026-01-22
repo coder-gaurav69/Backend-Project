@@ -66,11 +66,14 @@ export class TeamService {
         }
 
         const generatedTeamNo = await this.autoNumberService.generateTeamNo();
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const team = await this.prisma.team.create({
             data: {
                 ...dto,
+                teamName: toTitleCase(dto.teamName),
                 teamNo: dto.teamNo || generatedTeamNo,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 taskAssignPermission: dto.taskAssignPermission || false,
                 loginMethod: dto.loginMethod || LoginMethod.EMAIL,
                 status: dto.status || TeamStatus.ACTIVE,
@@ -101,6 +104,8 @@ export class TeamService {
 
         const andArray = where.AND as Array<Prisma.TeamWhereInput>;
 
+        const { toTitleCase } = await import('../common/utils/string-helper');
+
         // Handle Status Filter
         if (filter?.status) {
             const statusValues = typeof filter.status === 'string'
@@ -113,9 +118,9 @@ export class TeamService {
         if (filter?.companyId) andArray.push({ companyId: filter.companyId });
         if (filter?.locationId) andArray.push({ locationId: filter.locationId });
         if (filter?.subLocationId) andArray.push({ subLocationId: filter.subLocationId });
-        if (filter?.teamName) andArray.push(buildMultiValueFilter('teamName', filter.teamName));
+        if (filter?.teamName) andArray.push(buildMultiValueFilter('teamName', toTitleCase(filter.teamName)));
         if (filter?.teamNo) andArray.push(buildMultiValueFilter('teamNo', filter.teamNo));
-        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
+        if (filter?.remark) andArray.push(buildMultiValueFilter('remark', toTitleCase(filter.remark)));
 
         if (cleanedSearch) {
             const searchValues = cleanedSearch.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean);
@@ -123,6 +128,7 @@ export class TeamService {
 
             for (const val of searchValues) {
                 const searchLower = val.toLowerCase();
+                const searchTitle = toTitleCase(val);
                 const looksLikeCode = /^[A-Z]{1,}-\d+$/i.test(val) || /^U-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
                 if (looksLikeCode) {
@@ -130,15 +136,21 @@ export class TeamService {
                     allSearchConditions.push({ teamNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     allSearchConditions.push({ teamName: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ teamName: { contains: searchTitle, mode: 'insensitive' } });
                     allSearchConditions.push({ teamNo: { contains: val, mode: 'insensitive' } });
                     allSearchConditions.push({ email: { contains: val, mode: 'insensitive' } });
                 }
 
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
+                allSearchConditions.push({ remark: { contains: searchTitle, mode: 'insensitive' } });
                 allSearchConditions.push({ subLocation: { subLocationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ subLocation: { subLocationName: { contains: searchTitle, mode: 'insensitive' } } });
                 allSearchConditions.push({ location: { locationName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ location: { locationName: { contains: searchTitle, mode: 'insensitive' } } });
                 allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ company: { companyName: { contains: searchTitle, mode: 'insensitive' } } });
                 allSearchConditions.push({ clientGroup: { groupName: { contains: val, mode: 'insensitive' } } });
+                allSearchConditions.push({ clientGroup: { groupName: { contains: searchTitle, mode: 'insensitive' } } });
 
                 if ('active'.includes(searchLower) && searchLower.length >= 3) {
                     allSearchConditions.push({ status: 'ACTIVE' as any });
@@ -154,6 +166,19 @@ export class TeamService {
         }
 
         if (andArray.length === 0) delete where.AND;
+
+        // --- Redis Caching ---
+        // Only cache if there's no custom search/filter to avoid cache explosion
+        const isCacheable = !cleanedSearch && (!filter || Object.keys(filter).length === 0);
+        const cacheKey = `${this.CACHE_KEY}:list:p${page}:l${limit}:s${sortBy}:${sortOrder}`;
+
+        if (isCacheable) {
+            const cached = await this.redisService.getCache<PaginatedResponse<any>>(cacheKey);
+            if (cached) {
+                this.logger.log(`[CACHE_HIT] Team List - ${cacheKey}`);
+                return cached;
+            }
+        }
 
         const [data, total] = await Promise.all([
             this.prisma.team.findMany({
@@ -189,7 +214,14 @@ export class TeamService {
             subLocationName: item.subLocation?.subLocationName,
         }));
 
-        return new PaginatedResponse(mappedData, total, page, limit);
+        const response = new PaginatedResponse(mappedData, total, page, limit);
+
+        if (isCacheable) {
+            await this.redisService.setCache(cacheKey, response, this.CACHE_TTL);
+            this.logger.log(`[CACHE_MISS] Team List - Cached result: ${cacheKey}`);
+        }
+
+        return response;
     }
 
     async findActive(pagination: PaginationDto) {
@@ -223,6 +255,7 @@ export class TeamService {
 
     async update(id: string, dto: UpdateTeamDto, userId: string) {
         const existing = await this.findById(id);
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Validate optional relationships if being updated
         if (dto.clientGroupId) {
@@ -257,6 +290,8 @@ export class TeamService {
             where: { id },
             data: {
                 ...dto,
+                teamName: dto.teamName ? toTitleCase(dto.teamName) : undefined,
+                remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 updatedBy: userId,
             },
         });
@@ -300,6 +335,7 @@ export class TeamService {
     async bulkCreate(dto: BulkCreateTeamDto, userId: string) {
         this.logger.log(`[BULK_CREATE_FAST] Starting for ${dto.teams.length} records`);
         const errors: any[] = [];
+        const { toTitleCase } = await import('../common/utils/string-helper');
 
         const allExisting = await this.prisma.team.findMany({
             select: { teamNo: true },
@@ -315,7 +351,8 @@ export class TeamService {
 
         for (const teamDto of dto.teams) {
             try {
-                const teamName = teamDto.teamName?.trim() || 'Unnamed Team';
+                const teamName = toTitleCase(teamDto.teamName?.trim() || 'Unnamed Team');
+                const remark = teamDto.remark ? toTitleCase(teamDto.remark) : undefined;
 
                 // Unique number logic
                 let finalTeamNo = teamDto.teamNo?.trim();
@@ -333,6 +370,7 @@ export class TeamService {
                     ...teamDto,
                     teamName,
                     teamNo: finalTeamNo,
+                    remark,
                     taskAssignPermission: teamDto.taskAssignPermission || false,
                     loginMethod: teamDto.loginMethod || LoginMethod.EMAIL,
                     status: teamDto.status || TeamStatus.ACTIVE,

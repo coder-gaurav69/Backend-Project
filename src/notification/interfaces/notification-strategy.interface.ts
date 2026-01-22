@@ -1,7 +1,6 @@
 
 export enum OtpChannel {
     EMAIL = 'EMAIL',
-    SMS = 'SMS'
 }
 
 export interface NotificationStrategy {

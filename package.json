@@ -29,11 +29,13 @@
     "@nestjs/platform-express": "^11.1.11",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "5.22.0",
+    "@types/compression": "^1.8.1",
     "@types/multer": "^2.0.0",
     "@types/nodemailer": "^7.0.5",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "csv-parser": "^3.2.0",
     "exceljs": "^4.4.0",
@@ -48,7 +50,6 @@
     "redis": "^5.10.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "twilio": "^5.11.2",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
@@ -83,13 +84,19 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }

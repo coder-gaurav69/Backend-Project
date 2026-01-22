@@ -18,9 +18,9 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
         // Verify SMTP connection on startup
         try {
             await this.transporter.verify();
-            this.logger.log(`✅ SMTP connection verified successfully (Provider: ${this.smtpProvider})`);
+            this.logger.log(`✅ SMTP connection verified successfully`);
         } catch (error) {
-            this.logger.error(`❌ SMTP connection failed (Provider: ${this.smtpProvider}): ${error.message}`);
+            this.logger.error(`❌ SMTP connection failed: ${error.message}`);
             this.logger.warn('⚠️  Email OTP delivery may fail. Please check your SMTP credentials.');
         }
     }
@@ -32,61 +32,34 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
         const smtpPort = parseInt(this.configService.get('SMTP_PORT', '587'));
         const smtpSecure = this.configService.get('SMTP_SECURE', 'false') === 'true';
 
-        // Detect SMTP provider
-        if (smtpHost.includes('smtp-relay.brevo.com') || smtpHost.includes('sendinblue')) {
-            this.smtpProvider = 'brevo';
-        } else if (smtpUser.includes('gmail.com') || smtpHost.includes('gmail')) {
-            this.smtpProvider = 'gmail';
-        } else {
-            this.smtpProvider = 'custom';
+        // Pure SMTP configuration - provider agnostic
+        this.smtpProvider = 'custom';
+
+        if (!smtpHost || !smtpUser || !smtpPass) {
+            this.logger.error('❌ SMTP configuration incomplete. Please set SMTP_HOST, SMTP_USER, and SMTP_PASS.');
+            throw new Error('SMTP configuration is required');
         }
 
-        let transportConfig: any;
+        const transportConfig = {
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpSecure, // true for 465, false for 587
+            auth: {
+                user: smtpUser,
+                pass: smtpPass,
+            },
+        };
 
-        if (this.smtpProvider === 'brevo') {
-            // Brevo (Sendinblue) configuration - PRODUCTION SAFE
-            transportConfig = {
-                host: 'smtp-relay.brevo.com',
-                port: smtpPort,
-                secure: smtpSecure, // true for 465, false for 587
-                auth: {
-                    user: smtpUser, // Your Brevo account email
-                    pass: smtpPass, // Your Brevo SMTP key
-                },
-            };
-            this.logger.log('✅ Using Brevo SMTP - Production-safe configuration');
-        } else if (this.smtpProvider === 'gmail') {
-            // Gmail configuration (for local development only)
-            transportConfig = {
-                service: 'gmail',
-                auth: {
-                    user: smtpUser,
-                    pass: smtpPass,
-                },
-            };
-            this.logger.warn('⚠️  Using Gmail SMTP - NOT recommended for production!');
-        } else {
-            // Custom SMTP configuration
-            transportConfig = {
-                host: smtpHost,
-                port: smtpPort,
-                secure: smtpSecure,
-                auth: {
-                    user: smtpUser,
-                    pass: smtpPass,
-                },
-            };
-            this.logger.log(`📧 Using custom SMTP: ${smtpHost}:${smtpPort}`);
-        }
+        this.logger.log(`📧 Initializing SMTP: ${smtpHost}:${smtpPort} (Secure: ${smtpSecure})`);
 
         this.transporter = nodemailer.createTransport({
             ...transportConfig,
             pool: true, // Use connection pooling for better performance
             maxConnections: 5,
             maxMessages: 100,
-            connectionTimeout: 30000, // 30 seconds (increased for production)
+            connectionTimeout: 30000, // 30 seconds
             greetingTimeout: 30000,
-            socketTimeout: 45000, // 45 seconds (increased for cloud platforms)
+            socketTimeout: 45000, // 45 seconds
             tls: {
                 rejectUnauthorized: false, // Accept self-signed certificates
                 minVersion: 'TLSv1.2',
@@ -104,7 +77,7 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
         try {
             const fromEmail = this.configService.get('SMTP_FROM', '"HRMS Support" <noreply@yourapp.com>');
 
-            this.logger.log(`📤 Sending OTP to ${recipient} via ${this.smtpProvider}...`);
+            this.logger.log(`📤 Sending OTP to ${recipient}...`);
 
             const info = await this.transporter.sendMail({
                 from: fromEmail,
@@ -148,7 +121,7 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
             this.logger.error(`Error details: ${JSON.stringify({ code: error.code, command: error.command })}`);
 
             // Re-throw with more context
-            throw new Error(`Email delivery failed (${this.smtpProvider}): ${error.message}`);
+            throw new Error(`Email delivery failed: ${error.message}`);
         }
     }
 }
