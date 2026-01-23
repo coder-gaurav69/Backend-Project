@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, MaxLength } from 'class-validator';
 import { CompanyStatus } from '@prisma/client';
 
 export class CreateClientCompanyDto {
@@ -12,6 +12,7 @@ export class CreateClientCompanyDto {
 
     @IsString()
     @IsNotEmpty()
+    @MaxLength(6)
     companyCode: string;
 
     @IsUUID()
@@ -42,6 +43,7 @@ export class UpdateClientCompanyDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(6)
     companyCode?: string;
 
     @IsUUID()

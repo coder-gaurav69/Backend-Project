@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, MaxLength } from 'class-validator';
 import { LocationStatus } from '@prisma/client';
 
 export class CreateClientLocationDto {
@@ -12,6 +12,7 @@ export class CreateClientLocationDto {
 
     @IsString()
     @IsNotEmpty()
+    @MaxLength(6)
     locationCode: string;
 
     @IsUUID()
@@ -42,6 +43,7 @@ export class UpdateClientLocationDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(6)
     locationCode?: string;
 
     @IsUUID()

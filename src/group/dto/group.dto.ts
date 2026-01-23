@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, MaxLength } from 'class-validator';
 import { GroupStatus } from '@prisma/client';
 
 export class CreateGroupDto {
@@ -12,6 +12,7 @@ export class CreateGroupDto {
 
     @IsString()
     @IsNotEmpty()
+    @MaxLength(6)
     groupCode: string;
 
     @IsUUID()
@@ -50,6 +51,7 @@ export class UpdateGroupDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(6)
     groupCode?: string;
 
     @IsUUID()
