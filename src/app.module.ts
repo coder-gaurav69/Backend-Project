@@ -20,6 +20,7 @@ import { NotificationModule } from './notification/notification.module';
 import { TaskModule } from './task/task.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { RequestTransformInterceptor } from './common/interceptors/request-transform.interceptor';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -68,6 +69,11 @@ import { AppService } from './app.service';
     {
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
+    },
+    // Global Request Transformer (Title Case & Codes)
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestTransformInterceptor,
     },
     // Global Response Transformer
     {

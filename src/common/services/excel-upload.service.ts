@@ -165,7 +165,20 @@ export class ExcelUploadService {
                             rowData[key] = '';
                         }
                     } else if (val !== null && val !== undefined) {
-                        rowData[key] = val.toString().trim();
+                        let finalVal = val.toString().trim();
+
+                        // Transformation Logic (Excel Data)
+                        if (finalVal !== '') {
+                            if (key.toLowerCase().includes('code')) {
+                                finalVal = finalVal.toUpperCase();
+                            } else if (
+                                !['email', 'password', 'id', 'swrkey', 'status', 'token'].some(ex => key.toLowerCase().includes(ex)) &&
+                                !key.endsWith('Id')
+                            ) {
+                                finalVal = toTitleCase(finalVal);
+                            }
+                        }
+                        rowData[key] = finalVal;
                     } else {
                         rowData[key] = '';
                     }
