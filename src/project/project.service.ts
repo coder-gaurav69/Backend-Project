@@ -197,7 +197,7 @@ export class ProjectService {
                         },
                     },
                     _count: {
-                        select: { tasks: true }
+                        select: { pendingTasks: true, completedTasks: true }
                     }
                 },
             }),
@@ -313,7 +313,8 @@ export class ProjectService {
             include: {
                 _count: {
                     select: {
-                        tasks: true,
+                        pendingTasks: true,
+                        completedTasks: true,
                     }
                 }
             }
@@ -323,9 +324,10 @@ export class ProjectService {
             throw new NotFoundException('Project not found');
         }
 
-        if (project._count.tasks > 0) {
+        const totalTasks = project._count.pendingTasks + project._count.completedTasks;
+        if (totalTasks > 0) {
             throw new BadRequestException(
-                `Cannot delete Project because it contains ${project._count.tasks} tasks. Please delete or reassign them first.`
+                `Cannot delete Project because it contains ${totalTasks} tasks. Please delete or reassign them first.`
             );
         }
 

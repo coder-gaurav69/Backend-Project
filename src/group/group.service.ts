@@ -335,7 +335,8 @@ export class GroupService {
                 _count: {
                     select: {
                         members: true,
-                        tasks: true,
+                        pendingTasks: true,
+                        completedTasks: true,
                     }
                 }
             }
@@ -345,10 +346,11 @@ export class GroupService {
             throw new NotFoundException('Group not found');
         }
 
-        const { _count } = group;
+        const { _count } = group as any;
+        const totalTasks = _count.pendingTasks + _count.completedTasks;
         const childCounts = [
             _count.members > 0 && `${_count.members} members`,
-            _count.tasks > 0 && `${_count.tasks} tasks`,
+            totalTasks > 0 && `${totalTasks} tasks`,
         ].filter(Boolean);
 
         if (childCounts.length > 0) {

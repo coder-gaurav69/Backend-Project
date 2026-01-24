@@ -42,9 +42,12 @@ model User {
   sessions            Session[]
   createdSubLocations SubLocation[]    @relation("SubLocationCreatedByUser")
   updatedSubLocations SubLocation[]    @relation("SubLocationUpdatedByUser")
-  assignedTasks       Task[]           @relation("TaskAssignedTo")
-  createdTasks        Task[]           @relation("TaskCreatedBy")
-  workingTasks        Task[]           @relation("TaskWorkingBy")
+  assignedPendingTasks PendingTask[]    @relation("PendingTaskAssignedTo")
+  createdPendingTasks  PendingTask[]    @relation("PendingTaskCreatedBy")
+  workingPendingTasks  PendingTask[]    @relation("PendingTaskWorkingBy")
+  assignedCompletedTasks CompletedTask[] @relation("CompletedTaskAssignedTo")
+  createdCompletedTasks  CompletedTask[] @relation("CompletedTaskCreatedBy")
+  workingCompletedTasks  CompletedTask[] @relation("CompletedTaskWorkingBy")
   createdTeams        Team[]           @relation("TeamCreatedByUser")
   updatedTeams        Team[]           @relation("TeamUpdatedByUser")
   notifications       Notification[]
@@ -303,7 +306,8 @@ model Project {
   creator       User?           @relation("ProjectCreatedByUser", fields: [createdBy], references: [id])
   subLocation   SubLocation     @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
   updater       User?           @relation("ProjectUpdatedByUser", fields: [updatedBy], references: [id])
-  tasks         Task[]
+  pendingTasks  PendingTask[]
+  completedTasks CompletedTask[]
 
   @@index([projectNo])
   @@index([subLocationId])
@@ -352,7 +356,8 @@ model Team {
   @@index([clientGroupId, companyId, status])
   @@index([companyId, locationId, status])
   @@index([status, createdAt])
-  tasks                Task[]          @relation("TaskToTeam")
+  pendingTasks         PendingTask[]   @relation("PendingTaskToTeam")
+  completedTasks       CompletedTask[] @relation("CompletedTaskToTeam")
   @@map("teams")
 }
 
@@ -378,7 +383,8 @@ model Group {
   subLocation   SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
   updater       User?           @relation("GroupUpdatedByUser", fields: [updatedBy], references: [id])
   members       GroupMember[]
-  tasks         Task[]          @relation("TaskToGroup")
+  pendingTasks  PendingTask[] @relation("PendingTaskToGroup")
+  completedTasks CompletedTask[] @relation("CompletedTaskToGroup")
 
   @@index([groupNo])
   @@index([groupCode])
@@ -445,7 +451,7 @@ model IpAddress {
   @@map("ip_addresses")
 }
 
-model Task {
+model PendingTask {
   id             String     @id @default(uuid()) @db.Uuid
   taskNo         String     @unique @map("task_no")
   taskTitle      String     @map("task_title")
@@ -453,7 +459,6 @@ model Task {
   taskStatus     TaskStatus @default(Pending) @map("task_status")
   additionalNote String?    @map("additional_note")
   deadline       DateTime?
-  completeTime   DateTime?  @map("complete_time")
   reviewedTime   DateTime?  @map("reviewed_time")
   reminderTime   DateTime?  @map("reminder_time")
   attachment     String?
@@ -466,19 +471,52 @@ model Task {
   targetTeamId   String?    @map("target_team_id") @db.Uuid
   createdBy      String?    @map("created_by") @db.Uuid
   workingBy      String?    @map("working_by") @db.Uuid
-  assignee       User?      @relation("TaskAssignedTo", fields: [assignedTo], references: [id])
-  creator        User?      @relation("TaskCreatedBy", fields: [createdBy], references: [id])
+  assignee       User?      @relation("PendingTaskAssignedTo", fields: [assignedTo], references: [id])
+  creator        User?      @relation("PendingTaskCreatedBy", fields: [createdBy], references: [id])
   project        Project?   @relation(fields: [projectId], references: [id])
-  targetGroup    Group?     @relation("TaskToGroup", fields: [targetGroupId], references: [id])
-  targetTeam     Team?      @relation("TaskToTeam", fields: [targetTeamId], references: [id])
-  worker         User?      @relation("TaskWorkingBy", fields: [workingBy], references: [id])
+  targetGroup    Group?     @relation("PendingTaskToGroup", fields: [targetGroupId], references: [id])
+  targetTeam     Team?      @relation("PendingTaskToTeam", fields: [targetTeamId], references: [id])
+  worker         User?      @relation("PendingTaskWorkingBy", fields: [workingBy], references: [id])
 
   @@index([taskNo])
   @@index([taskStatus])
   @@index([projectId])
   @@index([assignedTo])
   @@index([targetTeamId])
-  @@map("tasks")
+  @@map("pending_tasks")
+}
+
+model CompletedTask {
+  id             String    @id @default(uuid()) @db.Uuid
+  taskNo         String    @unique @map("task_no")
+  taskTitle      String    @map("task_title")
+  priority       String?
+  taskStatus     TaskStatus @default(Completed) @map("task_status")
+  additionalNote String?   @map("additional_note")
+  deadline       DateTime?
+  completeTime   DateTime? @map("complete_time")
+  reviewedTime   DateTime? @map("reviewed_time")
+  attachment     String?
+  remarkChat     String?   @map("remark_chat")
+  creatingTime   DateTime  @default(now()) @map("creating_time")
+  completedAt    DateTime  @default(now()) @map("completed_at")
+  projectId      String?   @map("project_id") @db.Uuid
+  assignedTo     String?   @map("assigned_to") @db.Uuid
+  targetGroupId  String?   @map("target_group_id") @db.Uuid
+  targetTeamId   String?   @map("target_team_id") @db.Uuid
+  createdBy      String?   @map("created_by") @db.Uuid
+  workingBy      String?   @map("working_by") @db.Uuid
+  assignee       User?     @relation("CompletedTaskAssignedTo", fields: [assignedTo], references: [id])
+  creator        User?     @relation("CompletedTaskCreatedBy", fields: [createdBy], references: [id])
+  project        Project?  @relation(fields: [projectId], references: [id])
+  targetGroup    Group?    @relation("CompletedTaskToGroup", fields: [targetGroupId], references: [id])
+  targetTeam     Team?     @relation("CompletedTaskToTeam", fields: [targetTeamId], references: [id])
+  worker         User?     @relation("CompletedTaskWorkingBy", fields: [workingBy], references: [id])
+
+  @@index([taskNo])
+  @@index([projectId])
+  @@index([assignedTo])
+  @@map("completed_tasks")
 }
 
 enum UserRole {
@@ -569,5 +607,6 @@ enum IpAddressStatus {
 
 enum TaskStatus {
   Pending
+  Review
   Completed
 }

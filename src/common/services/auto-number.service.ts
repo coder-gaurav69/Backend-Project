@@ -131,7 +131,7 @@ export class AutoNumberService {
      */
     async generateTaskNo(): Promise<string> {
         return this.generateNumber(
-            'task',
+            'pendingTask',
             'taskNo',
             'T_NUMBER_PREFIX',
             'T_NUMBER_START',
