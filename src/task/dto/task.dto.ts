@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsUUID, IsDateString, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsUUID, IsDateString, IsNotEmpty, IsArray } from 'class-validator';
 import { TaskStatus } from '@prisma/client';
 
 export class CreateTaskDto {
@@ -11,10 +11,6 @@ export class CreateTaskDto {
     priority: string;
 
     @IsOptional()
-    @IsEnum(TaskStatus)
-    taskStatus?: TaskStatus;
-
-    @IsOptional()
     @IsString()
     additionalNote?: string;
 
@@ -23,12 +19,13 @@ export class CreateTaskDto {
     deadline?: string;
 
     @IsOptional()
-    @IsDateString()
-    reminderTime?: string;
+    @IsArray()
+    @IsDateString({}, { each: true })
+    reminderTime?: string[];
 
     @IsOptional()
     @IsString()
-    attachment?: string;
+    document?: string;
 
     @IsUUID()
     @IsNotEmpty()
@@ -57,10 +54,6 @@ export class UpdateTaskDto {
     priority?: string;
 
     @IsOptional()
-    @IsEnum(TaskStatus)
-    taskStatus?: TaskStatus;
-
-    @IsOptional()
     @IsString()
     additionalNote?: string;
 
@@ -73,16 +66,18 @@ export class UpdateTaskDto {
     completeTime?: string;
 
     @IsOptional()
-    @IsDateString()
-    reviewedTime?: string;
+    @IsArray()
+    @IsDateString({}, { each: true })
+    reviewedTime?: string[];
 
     @IsOptional()
-    @IsDateString()
-    reminderTime?: string;
+    @IsArray()
+    @IsDateString({}, { each: true })
+    reminderTime?: string[];
 
     @IsOptional()
     @IsString()
-    attachment?: string;
+    document?: string;
 
     @IsOptional()
     @IsString()
@@ -109,11 +104,9 @@ export class UpdateTaskDto {
     workingBy?: string;
 }
 
-export class FilterTaskDto {
-    @IsOptional()
-    @IsString()
-    search?: string;
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
+export class FilterTaskDto extends PaginationDto {
     @IsOptional()
     @IsEnum(TaskStatus)
     taskStatus?: TaskStatus;
@@ -149,12 +142,6 @@ export class FilterTaskDto {
     @IsOptional()
     @IsString()
     viewMode?: TaskViewMode;
-
-    @IsOptional()
-    page?: any;
-
-    @IsOptional()
-    limit?: any;
 }
 
 export enum TaskViewMode {

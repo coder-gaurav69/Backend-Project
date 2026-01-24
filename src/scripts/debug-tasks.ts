@@ -7,7 +7,7 @@ async function main() {
     console.log('Fetching latest 5 pending tasks...');
     const tasks = await prisma.pendingTask.findMany({
         take: 5,
-        orderBy: { creatingTime: 'desc' },
+        orderBy: { createdTime: 'desc' },
         include: {
             assignee: true,
             targetTeam: true,

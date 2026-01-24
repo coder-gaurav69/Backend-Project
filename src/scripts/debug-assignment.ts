@@ -7,7 +7,7 @@ async function main() {
     console.log('--- Checking Latest Tasks ---');
     const tasks = await prisma.pendingTask.findMany({
         take: 5,
-        orderBy: { creatingTime: 'desc' },
+        orderBy: { createdTime: 'desc' },
         include: {
             assignee: true,
             targetTeam: true,
@@ -17,8 +17,8 @@ async function main() {
 
     console.log(JSON.stringify(tasks, null, 2));
 
-    console.log('--- Checking All Users ---');
-    const users = await prisma.user.findMany({
+    console.log('--- Checking All Teams ---');
+    const users = await prisma.team.findMany({
         take: 5
     });
     console.log(JSON.stringify(users, null, 2));

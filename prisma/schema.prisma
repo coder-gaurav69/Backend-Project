@@ -451,11 +451,12 @@ model PendingTask {
   taskStatus     TaskStatus @default(Pending) @map("task_status")
   additionalNote String?    @map("additional_note")
   deadline       DateTime?
-  reviewedTime   DateTime?  @map("reviewed_time")
-  reminderTime   DateTime?  @map("reminder_time")
-  attachment     String?
+  reviewedTime   DateTime[] @map("reviewed_time")
+  reminderTime   DateTime[] @map("reminder_time")
+  document       String?    @map("document")
   remarkChat     String?    @map("remark_chat")
-  creatingTime   DateTime   @default(now()) @map("creating_time")
+  createdTime    DateTime   @default(now()) @map("created_time")
+  editTime       DateTime[] @map("edit_time")
   updatedAt      DateTime   @updatedAt @map("updated_at")
   projectId      String?    @map("project_id") @db.Uuid
   assignedTo     String?    @map("assigned_to") @db.Uuid
@@ -486,12 +487,15 @@ model CompletedTask {
   taskStatus     TaskStatus @default(Completed) @map("task_status")
   additionalNote String?   @map("additional_note")
   deadline       DateTime?
-  completeTime   DateTime? @map("complete_time")
-  reviewedTime   DateTime? @map("reviewed_time")
-  attachment     String?
-  remarkChat     String?   @map("remark_chat")
-  creatingTime   DateTime  @default(now()) @map("creating_time")
-  completedAt    DateTime  @default(now()) @map("completed_at")
+  completeTime   DateTime?  @map("complete_time")
+  reviewedTime   DateTime[] @map("reviewed_time")
+  reminderTime   DateTime[] @map("reminder_time")
+  document       String?    @map("document")
+  remarkChat     String?    @map("remark_chat")
+  createdTime    DateTime   @default(now()) @map("created_time")
+  editTime       DateTime[] @map("edit_time")
+  completedAt    DateTime   @default(now()) @map("completed_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
   projectId      String?   @map("project_id") @db.Uuid
   assignedTo     String?   @map("assigned_to") @db.Uuid
   targetGroupId  String?   @map("target_group_id") @db.Uuid
@@ -599,6 +603,6 @@ enum IpAddressStatus {
 
 enum TaskStatus {
   Pending
-  Review
+  ReviewPending
   Completed
 }

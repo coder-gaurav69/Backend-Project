@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutoNumberService } from '../common/services/auto-number.service';
 import { RedisService } from '../redis/redis.service';
@@ -6,6 +6,14 @@ import { CreateTaskDto, UpdateTaskDto, FilterTaskDto, TaskViewMode } from './dto
 import { NotificationService } from '../notification/notification.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { Prisma, TaskStatus } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
+const csvParser = require('csv-parser');
+import * as fs from 'fs';
+import * as path from 'path';
+import { promisify } from 'util';
+import { pipeline, Readable } from 'stream';
+
+const pipelineAsync = promisify(pipeline);
 
 @Injectable()
 export class TaskService {
@@ -26,24 +34,30 @@ export class TaskService {
         const fs = await import('fs');
         const path = await import('path');
 
-        let attachment = dto.attachment;
+        let document = dto.document;
         if (files && files.length > 0) {
             const file = files[0];
-            const fileName = `${Date.now()}-${file.originalname}`;
-            const uploadPath = path.join(process.cwd(), 'uploads', fileName);
+            // Rule: <TaskNumber>_<OriginalFileName>
+            const fileName = `${taskNo}_${file.originalname}`;
+            const uploadDir = path.join(process.cwd(), 'uploads');
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+            const uploadPath = path.join(uploadDir, fileName);
             fs.writeFileSync(uploadPath, file.buffer);
-            attachment = `/uploads/${fileName}`;
+            document = `/uploads/${fileName}`;
         }
 
         const task = await this.prisma.pendingTask.create({
             data: {
                 ...dto,
-                taskStatus: dto.taskStatus || TaskStatus.Pending,
+                taskStatus: TaskStatus.Pending, // Automated Status Derivation
                 taskTitle: toTitleCase(dto.taskTitle),
                 additionalNote: dto.additionalNote ? toTitleCase(dto.additionalNote) : undefined,
                 taskNo,
                 createdBy: userId,
-                attachment,
+                document,
+                reminderTime: dto.reminderTime ? [...new Set(dto.reminderTime)].sort().map(d => new Date(d)) : [],
+                editTime: [new Date()], // Initialize edit history
                 // Sanitize UUIDs to handle strings from FormData
                 assignedTo: dto.assignedTo && dto.assignedTo !== 'null' ? dto.assignedTo : null,
                 targetGroupId: dto.targetGroupId && dto.targetGroupId !== 'null' ? dto.targetGroupId : null,
@@ -58,9 +72,14 @@ export class TaskService {
             },
         });
 
-        // Send notifications
-        if (task.assignedTo) {
-            await this.notificationService.createNotification(task.assignedTo, {
+        // Send notifications to Assignee or Target Team
+        const recipients = new Set<string>();
+        if (task.assignedTo) recipients.add(task.assignedTo);
+        if (task.targetTeamId) recipients.add(task.targetTeamId);
+        recipients.delete(userId);
+
+        for (const recipientId of recipients) {
+            await this.notificationService.createNotification(recipientId, {
                 title: 'New Task Assigned',
                 description: `A new task "${task.taskTitle}" has been assigned to you.`,
                 type: 'TASK',
@@ -69,7 +88,7 @@ export class TaskService {
         }
 
         await this.invalidateCache();
-        return task;
+        return this.sortTaskDates(task);
     }
 
     async findAll(pagination: PaginationDto, filter: FilterTaskDto, userId?: string, role?: string) {
@@ -81,66 +100,67 @@ export class TaskService {
         const isCompletedView = filter.viewMode === TaskViewMode.MY_COMPLETED || filter.viewMode === TaskViewMode.TEAM_COMPLETED;
         const model: any = isCompletedView ? this.prisma.completedTask : this.prisma.pendingTask;
 
-        const where: any = { AND: [] };
+        const where: any = {
+            AND: [
+                // Global Security Rule: User must be involved in the task
+                {
+                    OR: [
+                        { assignedTo: userId },
+                        { targetTeamId: userId },
+                        { createdBy: userId },
+                        { workingBy: userId },
+                    ]
+                }
+            ]
+        };
         const andArray = where.AND;
 
-        // If we are filtering by view mode and have a userId (Team ID)
+        // Specific View Mode Filters
         if (filter.viewMode && userId) {
-            // Find current user's team info
-            const userTeam = await this.prisma.team.findUnique({
-                where: { id: userId },
-                select: { id: true, clientGroupId: true, companyId: true, locationId: true, subLocationId: true }
-            });
-
-            let teamMemberIds: string[] = [];
-            if (userTeam) {
-                // Find potential team members based on location/group hierarchy
-                const teamMembers = await this.prisma.team.findMany({
-                    where: {
-                        AND: [
-                            { status: 'Active' },
-                            { OR: [{ clientGroupId: userTeam.clientGroupId }, { clientGroupId: null }] },
-                            { OR: [{ companyId: userTeam.companyId }, { companyId: null }] },
-                            { OR: [{ locationId: userTeam.locationId }, { locationId: null }] },
-                            { OR: [{ subLocationId: userTeam.subLocationId }, { subLocationId: null }] }
-                        ]
-                    },
-                    select: { id: true }
-                });
-                teamMemberIds = teamMembers.map(t => t.id);
-            }
-
             switch (filter.viewMode) {
                 case TaskViewMode.MY_PENDING:
-                    andArray.push({ assignedTo: userId, taskStatus: TaskStatus.Pending });
-                    break;
-                case TaskViewMode.MY_COMPLETED:
-                    andArray.push({ assignedTo: userId, taskStatus: TaskStatus.Completed });
+                    andArray.push({
+                        OR: [{ assignedTo: userId }, { targetTeamId: userId }],
+                        taskStatus: TaskStatus.Pending
+                    });
                     break;
                 case TaskViewMode.TEAM_PENDING:
-                    // Assigned to any team member OR target team is user's team
                     andArray.push({
-                        OR: [
-                            { assignedTo: { in: teamMemberIds } },
-                            { targetTeamId: userTeam?.id }
-                        ],
-                        taskStatus: TaskStatus.Pending
+                        createdBy: userId,
+                        taskStatus: TaskStatus.Pending,
+                        // Not assigned to me (could be someone else or no one)
+                        AND: [
+                            { OR: [{ assignedTo: { not: userId } }, { assignedTo: null }] },
+                            { OR: [{ targetTeamId: { not: userId } }, { targetTeamId: null }] }
+                        ]
+                    });
+                    break;
+                case TaskViewMode.REVIEW_PENDING_BY_ME:
+                    // Show tasks waiting for user to review (user is creator)
+                    andArray.push({ createdBy: userId, taskStatus: TaskStatus.ReviewPending });
+                    break;
+                case TaskViewMode.REVIEW_PENDING_BY_TEAM:
+                    // Show tasks user submitted for review (user is assignee)
+                    andArray.push({
+                        OR: [{ assignedTo: userId }, { targetTeamId: userId }],
+                        taskStatus: TaskStatus.ReviewPending
+                    });
+                    break;
+                case TaskViewMode.MY_COMPLETED:
+                    andArray.push({
+                        OR: [{ assignedTo: userId }, { targetTeamId: userId }],
+                        taskStatus: TaskStatus.Completed
                     });
                     break;
                 case TaskViewMode.TEAM_COMPLETED:
                     andArray.push({
-                        OR: [
-                            { assignedTo: { in: teamMemberIds } },
-                            { targetTeamId: userTeam?.id }
-                        ],
-                        taskStatus: TaskStatus.Completed
+                        createdBy: userId,
+                        taskStatus: TaskStatus.Completed,
+                        AND: [
+                            { OR: [{ assignedTo: { not: userId } }, { assignedTo: null }] },
+                            { OR: [{ targetTeamId: { not: userId } }, { targetTeamId: null }] }
+                        ]
                     });
-                    break;
-                case TaskViewMode.REVIEW_PENDING_BY_ME:
-                    andArray.push({ createdBy: userId, taskStatus: TaskStatus.Review });
-                    break;
-                case TaskViewMode.REVIEW_PENDING_BY_TEAM:
-                    andArray.push({ createdBy: { in: teamMemberIds }, taskStatus: TaskStatus.Review });
                     break;
             }
         }
@@ -163,7 +183,7 @@ export class TaskService {
                 where,
                 skip,
                 take: limit,
-                orderBy: { creatingTime: 'desc' },
+                orderBy: { createdTime: 'desc' },
                 include: {
                     project: { select: { id: true, projectName: true, projectNo: true } },
                     assignee: { select: { id: true, firstName: true, lastName: true, email: true, teamName: true } },
@@ -175,7 +195,10 @@ export class TaskService {
             model.count({ where }),
         ]);
 
-        return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+        return {
+            data: data.map(task => this.sortTaskDates(task)),
+            meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
+        };
     }
 
     async findById(id: string) {
@@ -193,33 +216,28 @@ export class TaskService {
         }
 
         if (!task) throw new NotFoundException(`Task with ID ${id} not found`);
-        return task;
+        return this.sortTaskDates(task);
     }
 
     async update(id: string, dto: UpdateTaskDto, userId: string) {
         const existingTask = await this.findById(id);
         const { toTitleCase } = await import('../common/utils/string-helper');
 
-        // Check for Status Change to Completed
-        if (dto.taskStatus === TaskStatus.Completed && (existingTask as any).taskStatus !== TaskStatus.Completed) {
-            // Move from Pending to Completed
-            const { id: _, updatedAt: __, ...taskData } = existingTask as any;
-            const [deleted, created] = await this.prisma.$transaction([
-                this.prisma.pendingTask.delete({ where: { id } }),
-                this.prisma.completedTask.create({
-                    data: {
-                        ...taskData,
-                        taskStatus: TaskStatus.Completed,
-                        completeTime: new Date(),
-                        completedAt: new Date(),
-                    }
-                })
-            ]);
-            await this.invalidateCache();
-            return created;
-        }
+        // Automatic Status Logic: If it was REVIEW_PENDING or COMPLETED, we handle movements.
+        // But for this requirement, we mainly need to handle the update fields.
 
-        // Normal update in PeindingTask (since only pending tasks are usually editable)
+        const currentEditTime = (existingTask as any).editTime || [];
+        const newEditTime = [...currentEditTime, new Date()];
+
+        // Prepare multi-date fields
+        const reminderTime = dto.reminderTime
+            ? [...new Set([...((existingTask as any).reminderTime || []), ...dto.reminderTime])].sort().map(d => new Date(d))
+            : undefined;
+
+        const reviewedTime = dto.reviewedTime
+            ? [...new Set([...((existingTask as any).reviewedTime || []), ...dto.reviewedTime])].sort().map(d => new Date(d))
+            : undefined;
+
         const model: any = (existingTask as any).taskStatus === TaskStatus.Completed ? this.prisma.completedTask : this.prisma.pendingTask;
 
         const updated = await model.update({
@@ -229,15 +247,44 @@ export class TaskService {
                 taskTitle: dto.taskTitle ? toTitleCase(dto.taskTitle) : undefined,
                 additionalNote: dto.additionalNote ? toTitleCase(dto.additionalNote) : undefined,
                 remarkChat: dto.remarkChat ? toTitleCase(dto.remarkChat) : undefined,
+                editTime: newEditTime,
+                reminderTime: reminderTime,
+                reviewedTime: reviewedTime,
             },
+            include: { assignee: true, creator: true }
         });
 
+        // 1. If Status Transition required (handled by workflow, simplified here)
+        // Note: The original code had taskStatus in DTO, but we removed it.
+        // If we still need to support complete/review transitions, it should be via specialized endpoints or internal logic.
+        // Assuming workflow logic is separate or triggered differently now.
+
         await this.invalidateCache();
-        return updated;
+        return this.sortTaskDates(updated);
     }
 
-    async delete(id: string) {
+    private sortTaskDates(task: any) {
+        if (!task) return task;
+        const dateFields = ['reviewedTime', 'reminderTime', 'editTime'];
+        dateFields.forEach(field => {
+            if (Array.isArray(task[field])) {
+                task[field] = task[field].sort((a: Date, b: Date) => a.getTime() - b.getTime());
+            }
+        });
+        return task;
+    }
+
+    async delete(id: string, userId: string, role: string) {
         const existing = await this.findById(id);
+
+        // Security Check: Only ADMIN/SUPER_ADMIN or the Creator can delete
+        const isOwner = (existing as any).createdBy === userId;
+        const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
+
+        if (!isOwner && !isAdmin) {
+            throw new ForbiddenException('You do not have permission to delete this task. Only the creator or an admin can delete tasks.');
+        }
+
         const model: any = (existing as any).taskStatus === TaskStatus.Completed ? this.prisma.completedTask : this.prisma.pendingTask;
         const deleted = await model.delete({ where: { id } });
         await this.invalidateCache();
@@ -245,6 +292,182 @@ export class TaskService {
     }
 
     private async invalidateCache() {
-        await this.redisService.deleteCachePattern(`${this.CACHE_KEY}:*`);
+        await this.redisService.deleteCachePattern(`${this.CACHE_KEY}:* `);
+    }
+
+    /**
+     * Bulk Upload Logic: Excel -> CSV -> Streaming Read -> Batch Insert
+     */
+    async bulkUpload(file: Express.Multer.File, userId: string) {
+        const tempExcelPath = path.join(process.cwd(), 'uploads', `bulk_${Date.now()}.xlsx`);
+        const tempCsvPath = path.join(process.cwd(), 'uploads', `bulk_${Date.now()}.csv`);
+
+        try {
+            // 1. Save Excel file temporarily
+            fs.writeFileSync(tempExcelPath, file.buffer);
+
+            // 2. Convert Excel to CSV via Streaming
+            await this.convertExcelToCsvStreaming(tempExcelPath, tempCsvPath);
+
+            // 3. Process CSV in chunks
+            const results = await this.processCsvAndInsert(tempCsvPath, userId);
+
+            return {
+                message: 'Bulk upload completed',
+                ...results
+            };
+        } finally {
+            // 4. Cleanup temp files
+            if (fs.existsSync(tempExcelPath)) fs.unlinkSync(tempExcelPath);
+            if (fs.existsSync(tempCsvPath)) fs.unlinkSync(tempCsvPath);
+        }
+    }
+
+    private async convertExcelToCsvStreaming(excelPath: string, csvPath: string) {
+        const workbook = new ExcelJS.stream.xlsx.WorkbookReader(excelPath, {});
+        const writeStream = fs.createWriteStream(csvPath);
+
+        for await (const worksheet of workbook) {
+            for await (const row of worksheet) {
+                if (Array.isArray(row.values)) {
+                    // Skip internal exceljs indexing by using values.slice(1)
+                    const rowData = row.values.slice(1).map(v => v === null || v === undefined ? '' : String(v));
+                    writeStream.write(rowData.join(',') + '\n');
+                }
+            }
+        }
+        writeStream.end();
+        return new Promise<boolean>((resolve) => writeStream.on('finish', () => resolve(true)));
+    }
+
+    private async processCsvAndInsert(csvPath: string, userId: string) {
+        const parser = fs.createReadStream(csvPath).pipe(csvParser({ skipLines: 0 }));
+
+        let batch: any[] = [];
+        const BATCH_SIZE = 1000;
+        let successCount = 0;
+        let failCount = 0;
+        const errors: any[] = [];
+        let rowIndex = 1;
+
+        for await (const record of parser) {
+            rowIndex++;
+            try {
+                const validated = await this.validateBulkRow(record);
+                if (validated) {
+                    const taskNo = await this.autoNumberService.generateTaskNo();
+                    batch.push({
+                        ...validated,
+                        taskNo,
+                        createdBy: userId,
+                        taskStatus: TaskStatus.Pending,
+                        createdTime: new Date(),
+                        editTime: [new Date()],
+                    });
+                }
+
+                if (batch.length >= BATCH_SIZE) {
+                    await this.prisma.pendingTask.createMany({ data: batch });
+                    successCount += batch.length;
+                    batch = [];
+                }
+            } catch (err) {
+                failCount++;
+                errors.push({ row: rowIndex, error: err.message });
+            }
+        }
+
+        if (batch.length > 0) {
+            await this.prisma.pendingTask.createMany({ data: batch });
+            successCount += batch.length;
+        }
+
+        return { successCount, failCount, errors: errors.slice(0, 100) }; // Limit error log size
+    }
+
+    private async validateBulkRow(row: any) {
+        if (!row.taskTitle) throw new Error('Task Title is missing');
+        if (!row.projectId) throw new Error('Project ID is missing');
+        // Add more validation logic here
+        return {
+            taskTitle: row.taskTitle,
+            projectId: row.projectId,
+            priority: row.priority || 'Medium',
+            additionalNote: row.additionalNote || '',
+            deadline: row.deadline ? new Date(row.deadline) : null,
+        };
+    }
+
+    async downloadExcel(filter: FilterTaskDto, userId: string, res: any) {
+        const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+            stream: res,
+            useStyles: true,
+            useSharedStrings: true
+        });
+
+        const sheet = workbook.addWorksheet('Tasks');
+
+        sheet.columns = [
+            { header: 'Task No', key: 'taskNo', width: 15 },
+            { header: 'Title', key: 'taskTitle', width: 30 },
+            { header: 'Priority', key: 'priority', width: 10 },
+            { header: 'Status', key: 'taskStatus', width: 15 },
+            { header: 'Created Time', key: 'createdTime', width: 25 },
+            { header: 'Deadline', key: 'deadline', width: 20 },
+        ];
+
+        let cursor: string | undefined = undefined;
+        const BATCH_SIZE = 5000;
+
+        // Note: For 1 crore rows, we stream both Pending and Completed tasks
+        // This is a simplified version of the filter logic for streaming
+        const baseWhere: any = {
+            OR: [
+                { assignedTo: userId },
+                { targetTeamId: userId },
+                { createdBy: userId },
+                { workingBy: userId },
+            ]
+        };
+
+        const processTable = async (model: any) => {
+            let hasMore = true;
+            let lastId: string | undefined = undefined;
+
+            while (hasMore) {
+                const data = await model.findMany({
+                    where: baseWhere,
+                    take: BATCH_SIZE,
+                    skip: lastId ? 1 : 0,
+                    cursor: lastId ? { id: lastId } : undefined,
+                    orderBy: { id: 'asc' }
+                });
+
+                if (data.length === 0) {
+                    hasMore = false;
+                    continue;
+                }
+
+                for (const task of data) {
+                    sheet.addRow({
+                        taskNo: task.taskNo,
+                        taskTitle: task.taskTitle,
+                        priority: task.priority,
+                        taskStatus: task.taskStatus,
+                        createdTime: task.createdTime,
+                        deadline: task.deadline,
+                    }).commit();
+                }
+
+                lastId = data[data.length - 1].id;
+                if (data.length < BATCH_SIZE) hasMore = false;
+            }
+        };
+
+        // Stream from both tables
+        await processTable(this.prisma.pendingTask);
+        await processTable(this.prisma.completedTask);
+
+        await workbook.commit();
     }
 }

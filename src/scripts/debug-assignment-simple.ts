@@ -9,7 +9,7 @@ async function main() {
         // fetching as any to bypass strict typing issues during debug
         const tasks = await prisma.pendingTask.findMany({
             take: 5,
-            orderBy: { creatingTime: 'desc' },
+            orderBy: { createdTime: 'desc' },
         });
 
         for (const task of tasks) {
