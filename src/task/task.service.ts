@@ -166,7 +166,7 @@ export class TaskService {
                 orderBy: { creatingTime: 'desc' },
                 include: {
                     project: { select: { id: true, projectName: true, projectNo: true } },
-                    assignee: { select: { id: true, firstName: true, lastName: true, email: true } },
+                    assignee: { select: { id: true, firstName: true, lastName: true, email: true, teamName: true } },
                     creator: { select: { id: true, firstName: true, lastName: true, email: true } },
                     targetTeam: { select: { id: true, teamName: true, email: true } },
                     targetGroup: { select: { id: true, groupName: true, groupCode: true } }
