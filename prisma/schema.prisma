@@ -329,7 +329,7 @@ model Team {
   locationId           String?         @map("location_id") @db.Uuid
   subLocationId        String?         @map("sub_location_id") @db.Uuid
   status               TeamStatus      @default(Active)
-  loginMethod          LoginMethod     @default(EMAIL)
+  loginMethod          LoginMethod     @default(General)
   remark               String?
   createdAt            DateTime        @default(now()) @map("created_at")
   updatedAt            DateTime        @updatedAt @map("updated_at")
@@ -551,9 +551,10 @@ enum TeamStatus {
 }
 
 enum LoginMethod {
-  EMAIL
-  PHONE
-  BOTH
+  General
+  Otp
+  Ip_address
+  Ip_Otp
 }
 
 enum GroupStatus {
@@ -568,8 +569,5 @@ enum IpAddressStatus {
 
 enum TaskStatus {
   Pending
-  Success
-  Working
-  Review
-  Hold
+  Completed
 }

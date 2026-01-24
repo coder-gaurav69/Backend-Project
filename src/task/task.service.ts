@@ -173,14 +173,14 @@ export class TaskService {
                 case 'MY_PENDING':
                     andArray.push({
                         assignedTo: userId,
-                        taskStatus: { in: ['Pending', 'Working', 'Hold'] }
+                        taskStatus: 'Pending'
                     });
                     break;
 
                 case 'MY_COMPLETED':
                     andArray.push({
                         assignedTo: userId,
-                        taskStatus: 'Success'
+                        taskStatus: 'Completed'
                     });
                     break;
 
@@ -191,7 +191,7 @@ export class TaskService {
                             // @ts-ignore
                             { targetTeamId: userTeam?.id }
                         ],
-                        taskStatus: { in: ['Pending', 'Working', 'Hold'] }
+                        taskStatus: 'Pending'
                     });
                     break;
 
@@ -202,21 +202,15 @@ export class TaskService {
                             // @ts-ignore
                             { targetTeamId: userTeam?.id }
                         ],
-                        taskStatus: 'Success'
+                        taskStatus: 'Completed'
                     });
                     break;
 
                 case 'REVIEW_PENDING_BY_ME':
-                    andArray.push({
-                        createdBy: userId,
-                        taskStatus: 'Review'
-                    });
-                    break;
-
                 case 'REVIEW_PENDING_BY_TEAM':
+                    // Map review modes to simple pending as Review is removed
                     andArray.push({
-                        createdBy: { in: teamMemberIds },
-                        taskStatus: 'Review'
+                        taskStatus: 'Pending'
                     });
                     break;
             }
@@ -254,10 +248,7 @@ export class TaskService {
                 fieldOrConditions.push({ worker: { firstName: { contains: val, mode: 'insensitive' } } });
 
                 if ('pending'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'Pending' });
-                if ('success'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'Success' });
-                if ('working'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'Working' });
-                if ('review'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'Review' });
-                if ('hold'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'Hold' });
+                if ('completed'.includes(searchLower) && searchLower.length >= 3) fieldOrConditions.push({ taskStatus: 'Completed' });
 
                 searchOrConditions.push({ OR: fieldOrConditions });
             }

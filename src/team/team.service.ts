@@ -75,7 +75,7 @@ export class TeamService {
                 teamNo: dto.teamNo || generatedTeamNo,
                 remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 taskAssignPermission: dto.taskAssignPermission || false,
-                loginMethod: dto.loginMethod || LoginMethod.EMAIL,
+                loginMethod: dto.loginMethod || LoginMethod.General,
                 status: dto.status || TeamStatus.Active,
                 createdBy: userId,
             },
@@ -372,7 +372,7 @@ export class TeamService {
                     teamNo: finalTeamNo,
                     remark,
                     taskAssignPermission: teamDto.taskAssignPermission || false,
-                    loginMethod: teamDto.loginMethod || LoginMethod.EMAIL,
+                    loginMethod: teamDto.loginMethod || LoginMethod.General,
                     status: teamDto.status || TeamStatus.Active,
                     createdBy: userId,
                 });
@@ -531,7 +531,7 @@ export class TeamService {
             const row = data[i];
             try {
                 const status = row.status ? this.excelUploadService.validateEnum(row.status as string, TeamStatus, 'Status') : TeamStatus.Active;
-                const loginMethod = row.loginMethod ? this.excelUploadService.validateEnum(row.loginMethod as string, LoginMethod, 'LoginMethod') : LoginMethod.EMAIL;
+                const loginMethod = row.loginMethod ? this.excelUploadService.validateEnum(row.loginMethod as string, LoginMethod, 'LoginMethod') : LoginMethod.General;
 
                 if (!row.email) throw new Error(`Email is missing for ${row.teamName}`);
                 if (!row.phone) throw new Error(`Phone is missing for ${row.teamName}`);
