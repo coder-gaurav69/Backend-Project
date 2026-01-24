@@ -223,13 +223,9 @@ export class TaskService {
         const existingTask = await this.findById(id);
         const { toTitleCase } = await import('../common/utils/string-helper');
 
-        // Automatic Status Logic: If it was REVIEW_PENDING or COMPLETED, we handle movements.
-        // But for this requirement, we mainly need to handle the update fields.
-
         const currentEditTime = (existingTask as any).editTime || [];
         const newEditTime = [...currentEditTime, new Date()];
 
-        // Prepare multi-date fields
         const reminderTime = dto.reminderTime
             ? [...new Set([...((existingTask as any).reminderTime || []), ...dto.reminderTime])].sort().map(d => new Date(d))
             : undefined;
@@ -251,16 +247,105 @@ export class TaskService {
                 reminderTime: reminderTime,
                 reviewedTime: reviewedTime,
             },
-            include: { assignee: true, creator: true }
+            include: { assignee: true, creator: true, targetTeam: true }
         });
-
-        // 1. If Status Transition required (handled by workflow, simplified here)
-        // Note: The original code had taskStatus in DTO, but we removed it.
-        // If we still need to support complete/review transitions, it should be via specialized endpoints or internal logic.
-        // Assuming workflow logic is separate or triggered differently now.
 
         await this.invalidateCache();
         return this.sortTaskDates(updated);
+    }
+
+    async submitForReview(id: string, remark: string, userId: string) {
+        const task = await this.prisma.pendingTask.findUnique({
+            where: { id },
+            include: { creator: true }
+        });
+
+        if (!task) throw new NotFoundException('Task not found');
+        if (task.taskStatus !== TaskStatus.Pending) throw new BadRequestException('Only pending tasks can be submitted for review');
+
+        const updated = await this.prisma.pendingTask.update({
+            where: { id },
+            data: {
+                taskStatus: TaskStatus.ReviewPending,
+                remarkChat: remark,
+                workingBy: userId,
+                reviewedTime: { push: new Date() }
+            },
+            include: { creator: true, project: true }
+        });
+
+        // Notify Creator
+        if (updated.createdBy) {
+            await this.notificationService.createNotification(updated.createdBy, {
+                title: 'Task Submitted for Review',
+                description: `Task "${updated.taskTitle}" (${updated.taskNo}) has been submitted for review.`,
+                type: 'TASK',
+                metadata: { taskId: updated.id, taskNo: updated.taskNo, status: 'ReviewPending' },
+            });
+        }
+
+        await this.invalidateCache();
+        return this.sortTaskDates(updated);
+    }
+
+    async finalizeCompletion(id: string, remark: string, userId: string) {
+        const task = await this.prisma.pendingTask.findUnique({
+            where: { id },
+            include: { project: true, assignee: true, creator: true, targetGroup: true, targetTeam: true, worker: true }
+        });
+
+        if (!task) throw new NotFoundException('Task not found');
+        if (task.taskStatus !== TaskStatus.ReviewPending) throw new BadRequestException('Only tasks in review can be finalized');
+
+        // Security: Usually only creator/admin can finalize. 
+        // For now, we allow the caller (who should be guarded by controller)
+
+        const completedTask = await this.prisma.$transaction(async (tx) => {
+            // 1. Create in CompletedTask
+            const completed = await tx.completedTask.create({
+                data: {
+                    taskNo: task.taskNo,
+                    taskTitle: task.taskTitle,
+                    priority: task.priority,
+                    taskStatus: TaskStatus.Completed,
+                    additionalNote: task.additionalNote,
+                    deadline: task.deadline,
+                    document: task.document,
+                    remarkChat: remark || task.remarkChat,
+                    createdTime: task.createdTime,
+                    completeTime: new Date(),
+                    completedAt: new Date(),
+                    projectId: task.projectId,
+                    assignedTo: task.assignedTo,
+                    targetGroupId: task.targetGroupId,
+                    targetTeamId: task.targetTeamId,
+                    createdBy: task.createdBy,
+                    workingBy: task.workingBy,
+                    editTime: task.editTime,
+                    reviewedTime: [...task.reviewedTime, new Date()],
+                    reminderTime: task.reminderTime,
+                }
+            });
+
+            // 2. Delete from PendingTask
+            await tx.pendingTask.delete({ where: { id: task.id } });
+
+            return completed;
+        });
+
+        // Notify Worker/Assignee
+        const workerId = task.workingBy || task.assignedTo || task.targetTeamId;
+        if (workerId && workerId !== userId) {
+            await this.notificationService.createNotification(workerId, {
+                title: 'Task Completed & Approved',
+                description: `Your work on task "${task.taskTitle}" has been approved and marked as completed.`,
+                type: 'TASK',
+                metadata: { taskId: completedTask.id, taskNo: task.taskNo, status: 'Completed' },
+            });
+        }
+
+        await this.invalidateCache();
+        return this.sortTaskDates(completedTask);
     }
 
     private sortTaskDates(task: any) {

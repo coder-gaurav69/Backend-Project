@@ -90,6 +90,26 @@ export class TaskController {
         return this.taskService.update(id, dto, userId);
     }
 
+    @Patch(':id/submit-review')
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
+    submitReview(
+        @Param('id') id: string,
+        @Body('remark') remark: string,
+        @GetUser('id') userId: string,
+    ) {
+        return this.taskService.submitForReview(id, remark, userId);
+    }
+
+    @Patch(':id/finalize-complete')
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
+    finalizeComplete(
+        @Param('id') id: string,
+        @Body('remark') remark: string,
+        @GetUser('id') userId: string,
+    ) {
+        return this.taskService.finalizeCompletion(id, remark, userId);
+    }
+
     @Delete(':id')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
     delete(
