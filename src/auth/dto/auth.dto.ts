@@ -86,3 +86,15 @@ export class ResetPasswordDto {
     @MinLength(4)
     newPassword: string;
 }
+
+export class SetPasswordDto {
+    @IsEmail()
+    email: string;
+
+    @IsString()
+    token: string;
+
+    @IsString()
+    @MinLength(6)
+    password: string;
+}

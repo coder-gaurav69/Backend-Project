@@ -418,6 +418,7 @@ export class ClientGroupService {
             failed: dto.clientGroups.length - totalInserted,
             message: `Successfully inserted ${totalInserted} records.`,
             errors,
+            errorsDetail: errors
         };
     }
 
@@ -553,7 +554,7 @@ export class ClientGroupService {
     private async logAudit(userId: string, action: string, entityId: string, oldValue: any, newValue: any) {
         await this.prisma.auditLog.create({
             data: {
-                userId,
+                teamId: userId,
                 action,
                 entity: 'ClientGroup',
                 entityId,

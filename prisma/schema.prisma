@@ -7,63 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id                  String           @id @default(uuid()) @db.Uuid
-  email               String           @unique
-  password            String
-  firstName           String           @map("first_name")
-  lastName            String           @map("last_name")
-  role                UserRole         @default(EMPLOYEE)
-  status              UserStatus       @default(Pending_Verification)
-  isEmailVerified     Boolean          @default(false) @map("is_email_verified")
-  lastLoginAt         DateTime?        @map("last_login_at")
-  lastLoginIp         String?          @map("last_login_ip")
-  passwordChangedAt   DateTime?        @map("password_changed_at")
-  phoneNumber         String?          @unique @map("phone_number")
-  allowedIps          String[]         @default([]) @map("allowed_ips")
-  createdAt           DateTime         @default(now()) @map("created_at")
-  updatedAt           DateTime         @updatedAt @map("updated_at")
-  deletedAt           DateTime?        @map("deleted_at")
-  activityLogs        ActivityLog[]
-  auditLogs           AuditLog[]
-  createdCompanies    ClientCompany[]  @relation("CompanyCreatedByUser")
-  updatedCompanies    ClientCompany[]  @relation("CompanyUpdatedByUser")
-  createdClientGroups ClientGroup[]    @relation("CreatedByUser")
-  updatedClientGroups ClientGroup[]    @relation("UpdatedByUser")
-  createdLocations    ClientLocation[] @relation("LocationCreatedByUser")
-  updatedLocations    ClientLocation[] @relation("LocationUpdatedByUser")
-  createdGroups       Group[]          @relation("GroupCreatedByUser")
-  updatedGroups       Group[]          @relation("GroupUpdatedByUser")
-  createdIpAddresses  IpAddress[]      @relation("IpAddressCreatedByUser")
-  updatedIpAddresses  IpAddress[]      @relation("IpAddressUpdatedByUser")
-  createdProjects     Project[]        @relation("ProjectCreatedByUser")
-  updatedProjects     Project[]        @relation("ProjectUpdatedByUser")
-  refreshTokens       RefreshToken[]
-  sessions            Session[]
-  createdSubLocations SubLocation[]    @relation("SubLocationCreatedByUser")
-  updatedSubLocations SubLocation[]    @relation("SubLocationUpdatedByUser")
-  assignedPendingTasks PendingTask[]    @relation("PendingTaskAssignedTo")
-  createdPendingTasks  PendingTask[]    @relation("PendingTaskCreatedBy")
-  workingPendingTasks  PendingTask[]    @relation("PendingTaskWorkingBy")
-  assignedCompletedTasks CompletedTask[] @relation("CompletedTaskAssignedTo")
-  createdCompletedTasks  CompletedTask[] @relation("CompletedTaskCreatedBy")
-  workingCompletedTasks  CompletedTask[] @relation("CompletedTaskWorkingBy")
-  createdTeams        Team[]           @relation("TeamCreatedByUser")
-  updatedTeams        Team[]           @relation("TeamUpdatedByUser")
-  notifications       Notification[]
-  groupMembers        GroupMember[]
-
-  @@index([email])
-  @@index([status])
-  @@index([role])
-  @@index([deletedAt])
-  @@map("users")
-}
+// User model removed. Team is now the primary identity.
 
 model RefreshToken {
   id         String    @id @default(uuid()) @db.Uuid
   token      String    @unique
-  userId     String    @map("user_id") @db.Uuid
+  teamId     String?   @map("team_id") @db.Uuid
   expiresAt  DateTime  @map("expires_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   ipAddress  String?   @map("ip_address")
@@ -71,9 +20,9 @@ model RefreshToken {
   replacedBy String?   @map("replaced_by")
   revokedAt  DateTime? @map("revoked_at")
   userAgent  String?   @map("user_agent")
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team       Team?     @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([teamId])
   @@index([token])
   @@index([expiresAt])
   @@map("refresh_tokens")
@@ -82,16 +31,16 @@ model RefreshToken {
 model Session {
   id           String   @id @default(uuid()) @db.Uuid
   sessionId    String   @unique @map("session_id")
-  userId       String   @map("user_id") @db.Uuid
+  teamId       String?  @map("team_id") @db.Uuid
   ipAddress    String   @map("ip_address")
   userAgent    String?  @map("user_agent")
   expiresAt    DateTime @map("expires_at")
   isActive     Boolean  @default(true) @map("is_active")
   lastActivity DateTime @default(now()) @map("last_activity")
   createdAt    DateTime @default(now()) @map("created_at")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team         Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([teamId])
   @@index([sessionId])
   @@index([expiresAt])
   @@map("sessions")
@@ -110,8 +59,8 @@ model ClientGroup {
   createdBy   String?           @map("created_by") @db.Uuid
   updatedBy   String?           @map("updated_by") @db.Uuid
   companies   ClientCompany[]
-  creator     User?             @relation("CreatedByUser", fields: [createdBy], references: [id])
-  updater     User?             @relation("UpdatedByUser", fields: [updatedBy], references: [id])
+  creator     Team?             @relation("CreatedByTeam", fields: [createdBy], references: [id])
+  updater     Team?             @relation("UpdatedByTeam", fields: [updatedBy], references: [id])
   groups      Group[]
   ipAddresses IpAddress[]
   teams       Team[]
@@ -125,7 +74,7 @@ model ClientGroup {
 
 model AuditLog {
   id        String   @id @default(uuid()) @db.Uuid
-  userId    String?  @map("user_id") @db.Uuid
+  teamId    String?  @map("team_id") @db.Uuid
   action    String
   entity    String
   entityId  String?  @map("entity_id")
@@ -134,9 +83,9 @@ model AuditLog {
   ipAddress String   @map("ip_address")
   userAgent String?  @map("user_agent")
   createdAt DateTime @default(now()) @map("created_at")
-  user      User?    @relation(fields: [userId], references: [id])
+  team      Team?    @relation(fields: [teamId], references: [id])
 
-  @@index([userId])
+  @@index([teamId])
   @@index([entity])
   @@index([createdAt])
   @@map("audit_logs")
@@ -144,15 +93,15 @@ model AuditLog {
 
 model ActivityLog {
   id          String       @id @default(uuid()) @db.Uuid
-  userId      String?      @map("user_id") @db.Uuid
+  teamId      String?      @map("team_id") @db.Uuid
   type        ActivityType
   description String
   metadata    Json?
   ipAddress   String       @map("ip_address")
   createdAt   DateTime     @default(now()) @map("created_at")
-  user        User?        @relation(fields: [userId], references: [id])
+  team        Team?        @relation(fields: [teamId], references: [id])
 
-  @@index([userId])
+  @@index([teamId])
   @@index([type])
   @@index([createdAt])
   @@map("activity_logs")
@@ -160,16 +109,16 @@ model ActivityLog {
 
 model Notification {
   id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
+  teamId      String?  @map("team_id") @db.Uuid
   title       String
   description String
   type        String   @default("SYSTEM") // TASK, SYSTEM, etc.
   isRead      Boolean  @default(false) @map("is_read")
   metadata    Json?
   createdAt   DateTime @default(now()) @map("created_at")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team        Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([teamId])
   @@index([isRead])
   @@index([createdAt])
   @@map("notifications")
@@ -205,9 +154,9 @@ model ClientCompany {
   updatedAt    DateTime         @updatedAt @map("updated_at")
   createdBy    String?          @map("created_by") @db.Uuid
   updatedBy    String?          @map("updated_by") @db.Uuid
-  creator      User?            @relation("CompanyCreatedByUser", fields: [createdBy], references: [id])
+  creator      Team?            @relation("CompanyCreatedByTeam", fields: [createdBy], references: [id])
   group        ClientGroup      @relation(fields: [groupId], references: [id], onDelete: Restrict)
-  updater      User?            @relation("CompanyUpdatedByUser", fields: [updatedBy], references: [id])
+  updater      Team?            @relation("CompanyUpdatedByTeam", fields: [updatedBy], references: [id])
   locations    ClientLocation[]
   groups       Group[]
   ipAddresses  IpAddress[]
@@ -238,8 +187,8 @@ model ClientLocation {
   createdBy    String?        @map("created_by") @db.Uuid
   updatedBy    String?        @map("updated_by") @db.Uuid
   company      ClientCompany  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  creator      User?          @relation("LocationCreatedByUser", fields: [createdBy], references: [id])
-  updater      User?          @relation("LocationUpdatedByUser", fields: [updatedBy], references: [id])
+  creator      Team?          @relation("LocationCreatedByTeam", fields: [createdBy], references: [id])
+  updater      Team?          @relation("LocationUpdatedByTeam", fields: [updatedBy], references: [id])
   groups       Group[]
   ipAddresses  IpAddress[]
   subLocations SubLocation[]
@@ -273,9 +222,9 @@ model SubLocation {
   ipAddresses     IpAddress[]
   projects        Project[]
   company         ClientCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  creator         User?             @relation("SubLocationCreatedByUser", fields: [createdBy], references: [id])
+  creator         Team?             @relation("SubLocationCreatedByTeam", fields: [createdBy], references: [id])
   location        ClientLocation    @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  updater         User?             @relation("SubLocationUpdatedByUser", fields: [updatedBy], references: [id])
+  updater         Team?             @relation("SubLocationUpdatedByTeam", fields: [updatedBy], references: [id])
   teams           Team[]
 
   @@index([subLocationNo])
@@ -303,9 +252,9 @@ model Project {
   updatedAt     DateTime        @updatedAt @map("updated_at")
   createdBy     String?         @map("created_by") @db.Uuid
   updatedBy     String?         @map("updated_by") @db.Uuid
-  creator       User?           @relation("ProjectCreatedByUser", fields: [createdBy], references: [id])
+  creator       Team?           @relation("ProjectCreatedByTeam", fields: [createdBy], references: [id])
   subLocation   SubLocation     @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
-  updater       User?           @relation("ProjectUpdatedByUser", fields: [updatedBy], references: [id])
+  updater       Team?           @relation("ProjectUpdatedByTeam", fields: [updatedBy], references: [id])
   pendingTasks  PendingTask[]
   completedTasks CompletedTask[]
 
@@ -325,8 +274,8 @@ model Team {
   id                   String          @id @default(uuid()) @db.Uuid
   teamNo               String          @unique @map("team_no")
   teamName             String          @map("team_name")
-  email                String?
-  phone                String?
+  email                String          @unique
+  phone                String?         @unique
   taskAssignPermission Boolean         @default(false) @map("task_assign_permission")
   clientGroupId        String?         @map("client_group_id") @db.Uuid
   companyId            String?         @map("company_id") @db.Uuid
@@ -341,10 +290,53 @@ model Team {
   updatedBy            String?         @map("updated_by") @db.Uuid
   clientGroup          ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Restrict)
   company              ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  creator              User?           @relation("TeamCreatedByUser", fields: [createdBy], references: [id])
+  creator              Team?           @relation("TeamCreatedByTeam", fields: [createdBy], references: [id])
   location             ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Restrict)
   subLocation          SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
-  updater              User?           @relation("TeamUpdatedByUser", fields: [updatedBy], references: [id])
+  updater              Team?           @relation("TeamUpdatedByTeam", fields: [updatedBy], references: [id])
+  
+  // Auth Fields
+  password             String          @default("")
+  firstName            String?         @map("first_name")
+  lastName             String?         @map("last_name")
+  role                 UserRole        @default(EMPLOYEE)
+  isEmailVerified      Boolean         @default(false) @map("is_email_verified")
+  lastLoginAt          DateTime?       @map("last_login_at")
+  lastLoginIp          String?         @map("last_login_ip")
+  passwordChangedAt    DateTime?       @map("password_changed_at")
+  allowedIps           String[]        @default([]) @map("allowed_ips")
+  deletedAt            DateTime?       @map("deleted_at")
+
+  // Relations
+  activityLogs         ActivityLog[]
+  auditLogs            AuditLog[]
+  refreshTokens        RefreshToken[]
+  sessions             Session[]
+  notifications        Notification[]
+  groupMembers         GroupMember[]
+
+  createdCompanies    ClientCompany[]  @relation("CompanyCreatedByTeam")
+  updatedCompanies    ClientCompany[]  @relation("CompanyUpdatedByTeam")
+  createdClientGroups ClientGroup[]    @relation("CreatedByTeam")
+  updatedClientGroups ClientGroup[]    @relation("UpdatedByTeam")
+  createdLocations    ClientLocation[] @relation("LocationCreatedByTeam")
+  updatedLocations    ClientLocation[] @relation("LocationUpdatedByTeam")
+  createdGroups       Group[]          @relation("GroupCreatedByTeam")
+  updatedGroups       Group[]          @relation("GroupUpdatedByTeam")
+  createdIpAddresses  IpAddress[]      @relation("IpAddressCreatedByTeam")
+  updatedIpAddresses  IpAddress[]      @relation("IpAddressUpdatedByTeam")
+  createdProjects     Project[]        @relation("ProjectCreatedByTeam")
+  updatedProjects     Project[]        @relation("ProjectUpdatedByTeam")
+  createdSubLocations SubLocation[]    @relation("SubLocationCreatedByTeam")
+  updatedSubLocations SubLocation[]    @relation("SubLocationUpdatedByTeam")
+  assignedPendingTasks PendingTask[]    @relation("PendingTaskAssignedToTeam")
+  createdPendingTasks  PendingTask[]    @relation("PendingTaskCreatedByTeam")
+  workingPendingTasks  PendingTask[]    @relation("PendingTaskWorkingByTeam")
+  assignedCompletedTasks CompletedTask[] @relation("CompletedTaskAssignedToTeam")
+  createdCompletedTasks  CompletedTask[] @relation("CompletedTaskCreatedByTeam")
+  workingCompletedTasks  CompletedTask[] @relation("CompletedTaskWorkingByTeam")
+  createdTeams        Team[]           @relation("TeamCreatedByTeam")
+  updatedTeams        Team[]           @relation("TeamUpdatedByTeam")
 
   @@index([teamNo])
   @@index([clientGroupId])
@@ -378,10 +370,10 @@ model Group {
   updatedBy     String?         @map("updated_by") @db.Uuid
   clientGroup   ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Restrict)
   company       ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  creator       User?           @relation("GroupCreatedByUser", fields: [createdBy], references: [id])
+  creator       Team?           @relation("GroupCreatedByTeam", fields: [createdBy], references: [id])
   location      ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Restrict)
   subLocation   SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
-  updater       User?           @relation("GroupUpdatedByUser", fields: [updatedBy], references: [id])
+  updater       Team?           @relation("GroupUpdatedByTeam", fields: [updatedBy], references: [id])
   members       GroupMember[]
   pendingTasks  PendingTask[] @relation("PendingTaskToGroup")
   completedTasks CompletedTask[] @relation("CompletedTaskToGroup")
@@ -403,11 +395,11 @@ model Group {
 model GroupMember {
   id        String   @id @default(uuid()) @db.Uuid
   groupId   String   @map("group_id") @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid // Kept as field name for DB mapping but references Team
   role      String   @default("MEMBER") // OWNER, ADMIN, MEMBER
   joinedAt  DateTime @default(now()) @map("joined_at")
   group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, userId])
   @@index([groupId])
@@ -432,10 +424,10 @@ model IpAddress {
   updatedBy     String?         @map("updated_by") @db.Uuid
   clientGroup   ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Restrict)
   company       ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  creator       User?           @relation("IpAddressCreatedByUser", fields: [createdBy], references: [id])
+  creator       Team?           @relation("IpAddressCreatedByTeam", fields: [createdBy], references: [id])
   location      ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Restrict)
   subLocation   SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
-  updater       User?           @relation("IpAddressUpdatedByUser", fields: [updatedBy], references: [id])
+  updater       Team?           @relation("IpAddressUpdatedByTeam", fields: [updatedBy], references: [id])
 
   @@index([ipNo])
   @@index([ipAddress])
@@ -471,12 +463,12 @@ model PendingTask {
   targetTeamId   String?    @map("target_team_id") @db.Uuid
   createdBy      String?    @map("created_by") @db.Uuid
   workingBy      String?    @map("working_by") @db.Uuid
-  assignee       User?      @relation("PendingTaskAssignedTo", fields: [assignedTo], references: [id])
-  creator        User?      @relation("PendingTaskCreatedBy", fields: [createdBy], references: [id])
+  assignee       Team?      @relation("PendingTaskAssignedToTeam", fields: [assignedTo], references: [id])
+  creator        Team?      @relation("PendingTaskCreatedByTeam", fields: [createdBy], references: [id])
   project        Project?   @relation(fields: [projectId], references: [id])
   targetGroup    Group?     @relation("PendingTaskToGroup", fields: [targetGroupId], references: [id])
   targetTeam     Team?      @relation("PendingTaskToTeam", fields: [targetTeamId], references: [id])
-  worker         User?      @relation("PendingTaskWorkingBy", fields: [workingBy], references: [id])
+  worker         Team?      @relation("PendingTaskWorkingByTeam", fields: [workingBy], references: [id])
 
   @@index([taskNo])
   @@index([taskStatus])
@@ -506,12 +498,12 @@ model CompletedTask {
   targetTeamId   String?   @map("target_team_id") @db.Uuid
   createdBy      String?   @map("created_by") @db.Uuid
   workingBy      String?   @map("working_by") @db.Uuid
-  assignee       User?     @relation("CompletedTaskAssignedTo", fields: [assignedTo], references: [id])
-  creator        User?     @relation("CompletedTaskCreatedBy", fields: [createdBy], references: [id])
+  assignee       Team?     @relation("CompletedTaskAssignedToTeam", fields: [assignedTo], references: [id])
+  creator        Team?     @relation("CompletedTaskCreatedByTeam", fields: [createdBy], references: [id])
   project        Project?  @relation(fields: [projectId], references: [id])
   targetGroup    Group?    @relation("CompletedTaskToGroup", fields: [targetGroupId], references: [id])
   targetTeam     Team?     @relation("CompletedTaskToTeam", fields: [targetTeamId], references: [id])
-  worker         User?     @relation("CompletedTaskWorkingBy", fields: [workingBy], references: [id])
+  worker         Team?     @relation("CompletedTaskWorkingByTeam", fields: [workingBy], references: [id])
 
   @@index([taskNo])
   @@index([projectId])

@@ -1,5 +1,5 @@
-import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, IsBoolean, IsEmail } from 'class-validator';
-import { TeamStatus, LoginMethod } from '@prisma/client';
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, IsBoolean, IsEmail, MinLength } from 'class-validator';
+import { TeamStatus, LoginMethod, UserRole } from '@prisma/client';
 
 export class CreateTeamDto {
     @IsString()
@@ -49,6 +49,28 @@ export class CreateTeamDto {
     @IsString()
     @IsOptional()
     remark?: string;
+
+    @IsString()
+    @MinLength(6)
+    @IsOptional()
+    password?: string;
+
+    @IsString()
+    @IsOptional()
+    firstName?: string;
+
+    @IsString()
+    @IsOptional()
+    lastName?: string;
+
+    @IsEnum(UserRole)
+    @IsOptional()
+    role?: UserRole;
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    allowedIps?: string[];
 }
 
 export class UpdateTeamDto {
@@ -99,6 +121,28 @@ export class UpdateTeamDto {
     @IsString()
     @IsOptional()
     remark?: string;
+
+    @IsString()
+    @MinLength(6)
+    @IsOptional()
+    password?: string;
+
+    @IsString()
+    @IsOptional()
+    firstName?: string;
+
+    @IsString()
+    @IsOptional()
+    lastName?: string;
+
+    @IsEnum(UserRole)
+    @IsOptional()
+    role?: UserRole;
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    allowedIps?: string[];
 }
 
 export class BulkCreateTeamDto {

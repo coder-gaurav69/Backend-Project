@@ -84,27 +84,30 @@ export class TaskService {
         const where: any = { AND: [] };
         const andArray = where.AND;
 
+        // If we are filtering by view mode and have a userId (Team ID)
         if (filter.viewMode && userId) {
-            const userTeam = await this.prisma.team.findFirst({
-                where: { email: (await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } }))?.email },
+            // Find current user's team info
+            const userTeam = await this.prisma.team.findUnique({
+                where: { id: userId },
                 select: { id: true, clientGroupId: true, companyId: true, locationId: true, subLocationId: true }
             });
 
             let teamMemberIds: string[] = [];
             if (userTeam) {
+                // Find potential team members based on location/group hierarchy
                 const teamMembers = await this.prisma.team.findMany({
                     where: {
-                        AND: [{ status: 'Active' },
-                        { OR: [{ clientGroupId: userTeam.clientGroupId }, { clientGroupId: null }] },
-                        { OR: [{ companyId: userTeam.companyId }, { companyId: null }] },
-                        { OR: [{ locationId: userTeam.locationId }, { locationId: null }] },
-                        { OR: [{ subLocationId: userTeam.subLocationId }, { subLocationId: null }] }]
+                        AND: [
+                            { status: 'Active' },
+                            { OR: [{ clientGroupId: userTeam.clientGroupId }, { clientGroupId: null }] },
+                            { OR: [{ companyId: userTeam.companyId }, { companyId: null }] },
+                            { OR: [{ locationId: userTeam.locationId }, { locationId: null }] },
+                            { OR: [{ subLocationId: userTeam.subLocationId }, { subLocationId: null }] }
+                        ]
                     },
-                    select: { email: true }
+                    select: { id: true }
                 });
-                const emails = teamMembers.map(t => t.email).filter(Boolean) as string[];
-                const users = await this.prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true } });
-                teamMemberIds = users.map(u => u.id);
+                teamMemberIds = teamMembers.map(t => t.id);
             }
 
             switch (filter.viewMode) {
@@ -115,10 +118,23 @@ export class TaskService {
                     andArray.push({ assignedTo: userId, taskStatus: TaskStatus.Completed });
                     break;
                 case TaskViewMode.TEAM_PENDING:
-                    andArray.push({ OR: [{ assignedTo: { in: teamMemberIds } }, { targetTeamId: userTeam?.id }], taskStatus: TaskStatus.Pending });
+                    // Assigned to any team member OR target team is user's team
+                    andArray.push({
+                        OR: [
+                            { assignedTo: { in: teamMemberIds } },
+                            { targetTeamId: userTeam?.id }
+                        ],
+                        taskStatus: TaskStatus.Pending
+                    });
                     break;
                 case TaskViewMode.TEAM_COMPLETED:
-                    andArray.push({ OR: [{ assignedTo: { in: teamMemberIds } }, { targetTeamId: userTeam?.id }], taskStatus: TaskStatus.Completed });
+                    andArray.push({
+                        OR: [
+                            { assignedTo: { in: teamMemberIds } },
+                            { targetTeamId: userTeam?.id }
+                        ],
+                        taskStatus: TaskStatus.Completed
+                    });
                     break;
                 case TaskViewMode.REVIEW_PENDING_BY_ME:
                     andArray.push({ createdBy: userId, taskStatus: TaskStatus.Review });

@@ -10,6 +10,7 @@ import {
     ForgotPasswordDto,
     ResetPasswordDto,
     ResendOtpDto,
+    SetPasswordDto,
 } from './dto/auth.dto';
 import { Request } from 'express';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -93,6 +94,12 @@ export class AuthController {
     async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
         const ipAddress = req.ip || req.socket.remoteAddress || '';
         return this.authService.resetPassword(dto, ipAddress);
+    }
+
+    @Post('set-password')
+    async setPassword(@Body() dto: SetPasswordDto, @Req() req: Request) {
+        const ipAddress = req.ip || req.socket.remoteAddress || '';
+        return this.authService.setPassword(dto, ipAddress);
     }
 
     @Get('profile')

@@ -574,7 +574,7 @@ export class ProjectService {
     ) {
         await this.prisma.auditLog.create({
             data: {
-                userId,
+                teamId: userId,
                 action,
                 entity: 'Project',
                 entityId,

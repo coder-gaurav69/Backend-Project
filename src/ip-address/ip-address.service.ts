@@ -553,7 +553,7 @@ export class IpAddressService {
     ) {
         await this.prisma.auditLog.create({
             data: {
-                userId,
+                teamId: userId,
                 action,
                 entity: 'IpAddress',
                 entityId,

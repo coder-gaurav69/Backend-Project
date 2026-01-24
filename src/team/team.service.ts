@@ -4,6 +4,9 @@ import {
     BadRequestException,
     Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
+import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { AutoNumberService } from '../common/services/auto-number.service';
@@ -21,6 +24,7 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
 import { TeamStatus, LoginMethod, Prisma } from '@prisma/client';
 import { buildMultiValueFilter } from '../common/utils/prisma-helper';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class TeamService {
@@ -33,6 +37,8 @@ export class TeamService {
         private redisService: RedisService,
         private autoNumberService: AutoNumberService,
         private excelUploadService: ExcelUploadService,
+        private configService: ConfigService,
+        private notificationService: NotificationService,
     ) { }
 
     async create(dto: CreateTeamDto, userId: string) {
@@ -68,6 +74,14 @@ export class TeamService {
         const generatedTeamNo = await this.autoNumberService.generateTeamNo();
         const { toTitleCase } = await import('../common/utils/string-helper');
 
+        let hashedPassword = dto.password;
+        if (dto.password) {
+            hashedPassword = await bcrypt.hash(
+                dto.password,
+                parseInt(this.configService.get('BCRYPT_ROUNDS', '12')),
+            );
+        }
+
         const team = await this.prisma.team.create({
             data: {
                 ...dto,
@@ -76,10 +90,18 @@ export class TeamService {
                 remark: dto.remark ? toTitleCase(dto.remark) : undefined,
                 taskAssignPermission: dto.taskAssignPermission || false,
                 loginMethod: dto.loginMethod || LoginMethod.General,
-                status: dto.status || TeamStatus.Active,
+                status: dto.password ? (dto.status || TeamStatus.Active) : TeamStatus.Pending_Verification,
                 createdBy: userId,
+                password: hashedPassword,
             },
         });
+
+        // Trigger invitation if no password was provided
+        if (!dto.password && team.email) {
+            const token = uuidv4();
+            await this.redisService.set(`invitation:${token}`, team.email, 86400); // 24 hours
+            await this.notificationService.sendInvitation(team.email, team.teamName, token);
+        }
 
         await this.invalidateCache();
         await this.logAudit(userId, 'CREATE', team.id, null, team);
@@ -354,6 +376,14 @@ export class TeamService {
                 const teamName = toTitleCase(teamDto.teamName?.trim() || 'Unnamed Team');
                 const remark = teamDto.remark ? toTitleCase(teamDto.remark) : undefined;
 
+                let hashedPassword = teamDto.password;
+                if (teamDto.password) {
+                    hashedPassword = await bcrypt.hash(
+                        teamDto.password,
+                        parseInt(this.configService.get('BCRYPT_ROUNDS', '12')),
+                    );
+                }
+
                 // Unique number logic
                 let finalTeamNo = teamDto.teamNo?.trim();
                 if (!finalTeamNo || existingNos.has(finalTeamNo)) {
@@ -375,6 +405,7 @@ export class TeamService {
                     loginMethod: teamDto.loginMethod || LoginMethod.General,
                     status: teamDto.status || TeamStatus.Active,
                     createdBy: userId,
+                    password: hashedPassword,
                 });
             } catch (err) {
                 errors.push({ teamName: teamDto.teamName, error: err.message });
@@ -592,7 +623,7 @@ export class TeamService {
     ) {
         await this.prisma.auditLog.create({
             data: {
-                userId,
+                teamId: userId,
                 action,
                 entity: 'Team',
                 entityId,

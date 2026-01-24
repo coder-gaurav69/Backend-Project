@@ -17,7 +17,7 @@ import {
     OtpChannel,
 } from './dto/auth.dto';
 import { NotificationService } from '../notification/notification.service';
-import { UserRole, UserStatus } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -32,11 +32,11 @@ export class AuthService {
     ) { }
 
     async register(dto: RegisterDto, ipAddress: string) {
-        const existingUser = await this.prisma.user.findUnique({
+        const existingTeam = await this.prisma.team.findUnique({
             where: { email: dto.email },
         });
 
-        if (existingUser) {
+        if (existingTeam) {
             throw new ConflictException('Email already registered');
         }
 
@@ -85,59 +85,55 @@ export class AuthService {
             throw new BadRequestException('Registration session expired. Please register again.');
         }
 
-        // Create the user now
-        const user = await this.prisma.user.create({
+        // Create the team now
+        const team = await this.prisma.team.create({
             data: {
+                teamName: `${tempUser.firstName} ${tempUser.lastName}`,
+                teamNo: `TM-${Date.now()}`, // Temporary or auto-generated
                 email: tempUser.email,
                 password: tempUser.password,
-                firstName: tempUser.firstName,
-                lastName: tempUser.lastName,
-                phoneNumber: tempUser.phoneNumber,
+                phone: tempUser.phoneNumber,
                 role: UserRole.EMPLOYEE,
-                status: UserStatus.Active,
+                status: 'Active',
                 isEmailVerified: true,
-                allowedIps: [ipAddress], // Add verification IP to allowed list (Strict Security)
+                allowedIps: [ipAddress],
             } as any,
         });
 
         await this.redisService.deleteOTP(dto.email);
         await this.redisService.deleteTempUser(dto.email);
 
-        await this.logActivity(user.id, 'CREATE', 'User registered and verified', ipAddress);
+        await this.logActivity(team.id, 'CREATE', 'Team registered and verified', ipAddress, true);
 
         return { message: 'Account created and verified successfully. You can now login.' };
     }
 
     async login(dto: LoginDto, ipAddress: string, userAgent?: string) {
-        const user = await this.prisma.user.findUnique({
+        const identity = await this.prisma.team.findUnique({
             where: { email: dto.email },
         });
 
-        if (!user || user.deletedAt) {
+        if (!identity || identity.deletedAt) {
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+        const isPasswordValid = await bcrypt.compare(dto.password, identity.password);
         if (!isPasswordValid) {
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        if (user.status !== UserStatus.Active) {
+        if (identity.status !== 'Active') {
             throw new UnauthorizedException('Account is not active');
         }
 
-        // Check if OTP is enabled via environment variable (default: true)
-        const rawOtpConfig = this.configService.get('OTP_ENABLED');
         const otpEnabled = this.configService.get('OTP_ENABLED', 'true') === 'true';
-
-        this.logger.log(`DEBUG: OTP Configuration - Raw: "${rawOtpConfig}", Enabled: ${otpEnabled}`);
 
         if (!otpEnabled) {
             // OTP is disabled - skip OTP flow and proceed directly to login
-            this.logger.log(`OTP disabled - Direct login for ${user.email}`);
+            this.logger.log(`OTP disabled - Direct login for ${identity.email}`);
 
             // Enhanced IP Check (User-specific + Global Whitelist)
-            const allowedIps = user.allowedIps || [];
+            const allowedIps = identity.allowedIps || [];
             const isUserAllowed = allowedIps.includes(ipAddress);
 
             let isGloballyAllowed = false;
@@ -152,31 +148,32 @@ export class AuthService {
             }
 
             if (!isUserAllowed && !isGloballyAllowed) {
-                this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
+                this.logger.warn(`Blocked login attempt for ${identity.email} from unauthorized IP: ${ipAddress}`);
                 throw new UnauthorizedException('Access denied. Unrecognized IP address.');
             }
 
             // Return success with flag indicating OTP was skipped
             return {
                 message: 'Login successful (OTP disabled)',
-                email: user.email,
+                email: identity.email,
                 otpSkipped: true,
+                // Generate tokens directly for response if FE expects them here (adjust based on flow) - usually verifyLogin handles this
             };
         }
 
         // OTP is enabled - use existing OTP flow
         const otp = this.generateOTP();
         const ttl = 300; // 5 mins
-        await this.redisService.setLoginOTP(user.email, otp, ttl);
+        await this.redisService.setLoginOTP(identity.email, otp, ttl);
 
-        this.logger.log(`Login OTP for ${user.email}: ${otp}`);
+        this.logger.log(`Login OTP for ${identity.email}: ${otp}`);
 
-        // Send the OTP to the user's email
-        await this.notificationService.sendOtp(user.email, otp, OtpChannel.EMAIL);
+        // Send the OTP to the team's email
+        await this.notificationService.sendOtp(identity.email, otp, OtpChannel.EMAIL);
 
         return {
             message: 'Credentials verified. OTP has been sent to your email. Please verify to complete login.',
-            email: user.email,
+            email: identity.email,
             otpSkipped: false,
         };
     }
@@ -197,16 +194,16 @@ export class AuthService {
             this.logger.log(`OTP disabled - Skipping OTP validation for ${dto.email}`);
         }
 
-        const user = await this.prisma.user.findUnique({
+        const identity = await this.prisma.team.findUnique({
             where: { email: dto.email },
         });
 
-        if (!user) {
-            throw new UnauthorizedException('User not found');
+        if (!identity) {
+            throw new UnauthorizedException('Account not found');
         }
 
         // Enhanced IP Check (User-specific + Global Whitelist)
-        const allowedIps = user.allowedIps || [];
+        const allowedIps = identity.allowedIps || [];
         const isUserAllowed = allowedIps.includes(ipAddress);
 
         let isGloballyAllowed = false;
@@ -221,12 +218,12 @@ export class AuthService {
         }
 
         if (!isUserAllowed && !isGloballyAllowed) {
-            this.logger.warn(`Blocked login attempt for ${user.email} from unauthorized IP: ${ipAddress}`);
+            this.logger.warn(`Blocked login attempt for ${identity.email} from unauthorized IP: ${ipAddress}`);
             throw new UnauthorizedException('Access denied. Unrecognized IP address.');
         }
 
         // Generate tokens
-        const { accessToken, refreshToken } = await this.generateTokens(user.id, user.email, user.role);
+        const { accessToken, refreshToken } = await this.generateTokens(identity.id, identity.email, identity.role);
 
         // Create session
         const sessionId = uuidv4();
@@ -235,7 +232,7 @@ export class AuthService {
         await this.prisma.session.create({
             data: {
                 sessionId,
-                userId: user.id,
+                teamId: identity.id,
                 ipAddress,
                 userAgent,
                 expiresAt: new Date(Date.now() + sessionExpiry * 1000),
@@ -244,7 +241,7 @@ export class AuthService {
 
         await this.redisService.setSession(
             sessionId,
-            { userId: user.id, email: user.email, role: user.role },
+            { teamId: identity.id, email: identity.email, role: identity.role },
             sessionExpiry,
         );
 
@@ -253,23 +250,23 @@ export class AuthService {
         await this.prisma.refreshToken.create({
             data: {
                 token: refreshToken,
-                userId: user.id,
+                teamId: identity.id,
                 expiresAt: new Date(Date.now() + refreshExpiry * 1000),
                 ipAddress,
                 userAgent,
             },
         });
 
-        await this.redisService.setRefreshToken(refreshToken, user.id, refreshExpiry);
+        await this.redisService.setRefreshToken(refreshToken, identity.id, refreshExpiry);
 
         // Clean up OTP if it was used
         if (otpEnabled) {
-            await this.redisService.deleteLoginOTP(user.email);
+            await this.redisService.deleteLoginOTP(identity.email);
         }
 
         // Update last login
-        await this.prisma.user.update({
-            where: { id: user.id },
+        await this.prisma.team.update({
+            where: { id: identity.id },
             data: {
                 lastLoginAt: new Date(),
                 lastLoginIp: ipAddress,
@@ -277,36 +274,41 @@ export class AuthService {
         });
 
         const loginMethod = otpEnabled ? 'OTP' : 'Direct (OTP disabled)';
-        await this.logActivity(user.id, 'LOGIN', `User logged in via ${loginMethod}`, ipAddress);
+        await this.logActivity(identity.id, 'LOGIN', `Account logged in via ${loginMethod}`, ipAddress, true);
 
         return {
             accessToken,
             refreshToken,
             sessionId,
             user: {
-                id: user.id,
-                email: user.email,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                role: user.role,
+                id: identity.id,
+                email: identity.email,
+                firstName: identity.firstName,
+                lastName: identity.lastName,
+                role: identity.role,
+                isTeam: true,
             },
         };
     }
 
     async refreshTokens(dto: RefreshTokenDto, ipAddress: string) {
-        const storedUserId = await this.redisService.getRefreshToken(dto.refreshToken);
+        const storedTeamId = await this.redisService.getRefreshToken(dto.refreshToken);
 
-        if (!storedUserId) {
+        if (!storedTeamId) {
             throw new UnauthorizedException('Invalid refresh token');
         }
 
         const tokenRecord = await this.prisma.refreshToken.findUnique({
             where: { token: dto.refreshToken },
-            include: { user: true },
+            include: { team: true },
         });
 
         if (!tokenRecord || tokenRecord.isRevoked || tokenRecord.expiresAt < new Date()) {
             throw new UnauthorizedException('Invalid or expired refresh token');
+        }
+
+        if (!tokenRecord.team) {
+            throw new UnauthorizedException('Invalid token owner');
         }
 
         // Revoke old token
@@ -318,9 +320,9 @@ export class AuthService {
 
         // Generate new tokens
         const { accessToken, refreshToken } = await this.generateTokens(
-            tokenRecord.user.id,
-            tokenRecord.user.email,
-            tokenRecord.user.role,
+            tokenRecord.team.id,
+            tokenRecord.team.email,
+            tokenRecord.team.role,
         );
 
         // Store new refresh token
@@ -328,37 +330,37 @@ export class AuthService {
         await this.prisma.refreshToken.create({
             data: {
                 token: refreshToken,
-                userId: tokenRecord.user.id,
+                teamId: tokenRecord.team.id,
                 expiresAt: new Date(Date.now() + refreshExpiry * 1000),
                 ipAddress,
                 replacedBy: dto.refreshToken,
             },
         });
 
-        await this.redisService.setRefreshToken(refreshToken, tokenRecord.user.id, refreshExpiry);
+        await this.redisService.setRefreshToken(refreshToken, tokenRecord.team.id, refreshExpiry);
 
         return { accessToken, refreshToken };
     }
 
-    async logout(userId: string, sessionId: string) {
+    async logout(teamId: string, sessionId: string) {
         await this.prisma.session.update({
             where: { sessionId },
             data: { isActive: false },
         });
 
         await this.redisService.deleteSession(sessionId);
-        await this.logActivity(userId, 'LOGOUT', 'User logged out', '');
+        await this.logActivity(teamId, 'LOGOUT', 'User logged out', '', true);
 
         return { message: 'Logged out successfully' };
     }
 
-    async changePassword(userId: string, dto: ChangePasswordDto, ipAddress: string) {
-        const user = await this.prisma.user.findUnique({ where: { id: userId } });
-        if (!user) {
-            throw new BadRequestException('User not found');
+    async changePassword(teamId: string, dto: ChangePasswordDto, ipAddress: string) {
+        const team = await this.prisma.team.findUnique({ where: { id: teamId } });
+        if (!team) {
+            throw new BadRequestException('Account not found');
         }
 
-        const isOldPasswordValid = await bcrypt.compare(dto.oldPassword, user.password);
+        const isOldPasswordValid = await bcrypt.compare(dto.oldPassword, team.password);
         if (!isOldPasswordValid) {
             throw new BadRequestException('Old password is incorrect');
         }
@@ -368,37 +370,37 @@ export class AuthService {
             parseInt(this.configService.get('BCRYPT_ROUNDS', '12')),
         );
 
-        await this.prisma.user.update({
-            where: { id: userId },
+        await this.prisma.team.update({
+            where: { id: teamId },
             data: {
                 password: hashedPassword,
                 passwordChangedAt: new Date(),
             },
         });
 
-        await this.logActivity(userId, 'PASSWORD_CHANGE', 'Password changed', ipAddress);
+        await this.logActivity(teamId, 'PASSWORD_CHANGE', 'Password changed', ipAddress, true);
 
         return { message: 'Password changed successfully' };
     }
 
     async forgotPassword(dto: ForgotPasswordDto, ipAddress: string) {
-        const user = await this.prisma.user.findUnique({
+        const team = await this.prisma.team.findUnique({
             where: { email: dto.email },
         });
 
-        if (!user) {
+        if (!team) {
             // Don't reveal if email exists
             return { message: 'If email exists, OTP has been sent' };
         }
 
         const otp = this.generateOTP();
         await this.redisService.setOTP(
-            user.email,
+            team.email,
             otp,
             parseInt(this.configService.get('OTP_EXPIRATION', '600')),
         );
 
-        this.logger.log(`Password reset OTP for ${user.email}: ${otp}`);
+        this.logger.log(`Password reset OTP for ${team.email}: ${otp}`);
 
         return { message: 'If email exists, OTP has been sent' };
     }
@@ -415,7 +417,7 @@ export class AuthService {
             parseInt(this.configService.get('BCRYPT_ROUNDS', '12')),
         );
 
-        const user = await this.prisma.user.update({
+        const team = await this.prisma.team.update({
             where: { email: dto.email },
             data: {
                 password: hashedPassword,
@@ -424,7 +426,7 @@ export class AuthService {
         });
 
         await this.redisService.deleteOTP(dto.email);
-        await this.logActivity(user.id, 'PASSWORD_CHANGE', 'Password reset', ipAddress);
+        await this.logActivity(team.id, 'PASSWORD_CHANGE', 'Password reset', ipAddress, true);
 
         return { message: 'Password reset successfully' };
     }
@@ -452,14 +454,40 @@ export class AuthService {
             .padStart(length, '0');
     }
 
-    private async logActivity(userId: string, type: string, description: string, ipAddress: string) {
+    private async logActivity(id: string, type: string, description: string, ipAddress: string, isTeam: boolean = false) {
         await this.prisma.activityLog.create({
             data: {
-                userId,
+                teamId: id,
                 type: type as any,
                 description,
                 ipAddress,
             },
         });
+    }
+
+    async setPassword(dto: any, ipAddress: string) {
+        const storedToken = await this.redisService.get(`invitation:${dto.token}`);
+        if (!storedToken || storedToken !== dto.email) {
+            throw new BadRequestException('Invalid or expired invitation token');
+        }
+
+        const hashedPassword = await bcrypt.hash(
+            dto.password,
+            parseInt(this.configService.get('BCRYPT_ROUNDS', '12')),
+        );
+
+        const team = await this.prisma.team.update({
+            where: { email: dto.email },
+            data: {
+                password: hashedPassword,
+                isEmailVerified: true,
+                status: 'Active',
+            },
+        });
+
+        await this.redisService.del(`invitation:${dto.token}`);
+        await this.logActivity(team.id, 'PASSWORD_CHANGE', 'Team password set via invitation', ipAddress, true);
+
+        return { message: 'Password set successfully. You can now login.' };
     }
 }

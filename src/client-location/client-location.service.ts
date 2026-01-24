@@ -598,7 +598,7 @@ export class ClientLocationService {
     ) {
         await this.prisma.auditLog.create({
             data: {
-                userId,
+                teamId: userId,
                 action,
                 entity: 'ClientLocation',
                 entityId,

@@ -1,4 +1,4 @@
-import { PrismaClient, UserRole, UserStatus } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -10,13 +10,16 @@ async function main() {
 
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Delete existing user if any to avoid conflict
-    await prisma.user.deleteMany({
-        where: { email }
-    });
+    // Delete existing team if any to avoid conflict
+    const existing = await prisma.team.findUnique({ where: { email } });
+    if (existing) {
+        await prisma.team.delete({ where: { id: existing.id } });
+    }
 
-    const user = await prisma.user.create({
+    const team = await prisma.team.create({
         data: {
+            teamName: 'Investation Admin',
+            teamNo: 'TM-ADMIN-01',
             email,
             password: hashedPassword,
             firstName: 'Investation',
@@ -24,11 +27,11 @@ async function main() {
             role: 'SUPER_ADMIN' as any,
             status: 'Active' as any,
             isEmailVerified: true,
-            allowedIps: ['::1', '127.0.0.1'], // Allow local development IPs
+            allowedIps: ['::1', '127.0.0.1'],
         },
     });
 
-    console.log('✅ Admin User Created Successfully!');
+    console.log('✅ Admin Team Created Successfully!');
     console.log('Email:', email);
     console.log('Password:', password);
 }

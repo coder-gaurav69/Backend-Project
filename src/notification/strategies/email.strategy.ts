@@ -87,6 +87,57 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
         }
     }
 
+    async sendInvitation(recipient: string, teamName: string, token: string): Promise<boolean> {
+        if (!this.transporter) {
+            this.logger.error('❌ Cannot send email: SMTP not configured.');
+            throw new Error('SMTP provider not configured.');
+        }
+
+        const startTime = Date.now();
+        try {
+            const fromEmail = this.configService.get('SMTP_FROM', '"HRMS Support" <noreply@yourapp.com>');
+            const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
+            const invitationLink = `${frontendUrl}/set-password?token=${token}&email=${recipient}`;
+
+            await this.transporter.sendMail({
+                from: fromEmail,
+                to: recipient,
+                subject: '🤝 Welcome to Mission HRMS - Set Your Password',
+                html: this.getInvitationHtml(teamName, invitationLink),
+            });
+
+            this.logger.log(`✅ Invitation sent to ${recipient} in ${Date.now() - startTime}ms`);
+            return true;
+        } catch (error) {
+            this.logger.error(`❌ SMTP Failed for invitation to ${recipient}: ${error.message}`);
+            throw new Error(`Invitation delivery failed: ${error.message}`);
+        }
+    }
+
+    private getInvitationHtml(teamName: string, link: string): string {
+        return `
+            <!DOCTYPE html>
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background: linear-gradient(135deg, #FF3D71 0%, #FF8A9B 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 24px;">🤝 Welcome to Mission HRMS</h1>
+                </div>
+                <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+                    <p style="font-size: 16px; margin-bottom: 20px;">Hello ${teamName},</p>
+                    <p style="font-size: 16px; margin-bottom: 20px;">You have been added to the Mission HRMS system. To get started, please set your password by clicking the link below:</p>
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${link}" style="background-color: #FF3D71; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Set My Password</a>
+                    </div>
+                    <p style="font-size: 14px; color: #666;">This link will expire in 24 hours.</p>
+                    <p style="font-size: 14px; color: #666; margin-top: 20px;">If you didn't expect this invitation, please ignore this email.</p>
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                    <p style="font-size: 12px; color: #999; text-align: center;">© ${new Date().getFullYear()} Mission HRMS. All rights reserved.</p>
+                </div>
+            </body>
+            </html>
+        `;
+    }
+
     private getEmailHtml(otp: string): string {
         return `
             <!DOCTYPE html>

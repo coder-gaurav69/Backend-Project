@@ -622,7 +622,7 @@ export class ClientCompanyService {
     ) {
         await this.prisma.auditLog.create({
             data: {
-                userId,
+                teamId: userId,
                 action,
                 entity: 'ClientCompany',
                 entityId,

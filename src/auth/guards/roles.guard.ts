@@ -21,18 +21,18 @@ export class RolesGuard implements CanActivate {
             return true;
         }
 
-        const { user } = request;
-        if (!user) {
-            console.log(`[ROLES_GUARD] No user found in request for ${url}. Access Denied.`);
+        const identity = request.user;
+        if (!identity) {
+            console.log(`[ROLES_GUARD] No identity found in request for ${url}. Access Denied.`);
             return false;
         }
 
-        const hasPermission = requiredRoles.some((role) => user.role === role);
+        const hasPermission = requiredRoles.some((role) => identity.role === role);
 
         if (!hasPermission) {
-            console.log(`[ROLES_GUARD] Access Denied for ${url}. User Role: ${user?.role}, Required Roles: ${requiredRoles}`);
+            console.log(`[ROLES_GUARD] Access Denied for ${url}. Identity Role: ${identity?.role}, Required Roles: ${requiredRoles}`);
         } else {
-            console.log(`[ROLES_GUARD] Access Granted for ${url}. User Role: ${user?.role}`);
+            console.log(`[ROLES_GUARD] Access Granted for ${url}. Identity Role: ${identity?.role}`);
         }
 
         return hasPermission;

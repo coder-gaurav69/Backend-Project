@@ -16,11 +16,10 @@ export class NotificationService {
         this.strategies.set(OtpChannel.EMAIL, emailStrategy);
     }
 
-    async createNotification(userId: string, data: { title: string; description: string; type?: string; metadata?: any }) {
-        // @ts-ignore
+    async createNotification(teamId: string, data: { title: string; description: string; type?: string; metadata?: any }) {
         return this.prisma.notification.create({
             data: {
-                userId,
+                teamId,
                 title: data.title,
                 description: data.description,
                 type: data.type || 'SYSTEM',
@@ -30,57 +29,51 @@ export class NotificationService {
     }
 
     async broadcastToGroup(groupId: string, data: { title: string; description: string; type?: string; metadata?: any }) {
-        // @ts-ignore
         const members = await this.prisma.groupMember.findMany({
             where: { groupId },
-            select: { userId: true },
+            select: { userId: true }, // Note: userId in GroupMember still refers to the member (Team) ID
         });
 
         if (members.length === 0) return { count: 0 };
 
         const notificationsData = members.map(member => ({
-            userId: member.userId,
+            teamId: member.userId,
             title: data.title,
             description: data.description,
             type: data.type || 'SYSTEM',
             metadata: data.metadata || {},
         }));
 
-        // @ts-ignore
         return this.prisma.notification.createMany({
             data: notificationsData,
         });
     }
 
-    async findAllForUser(userId: string) {
-        // @ts-ignore
+    async findAllForUser(teamId: string) {
         return this.prisma.notification.findMany({
-            where: { userId },
+            where: { teamId },
             orderBy: { createdAt: 'desc' },
             take: 50, // Limit to recent 50
         });
     }
 
-    async markAsRead(id: string, userId: string) {
-        // @ts-ignore
+    async markAsRead(id: string, teamId: string) {
         return this.prisma.notification.update({
-            where: { id, userId },
+            where: { id, teamId }, // Ensure we only update if it belongs to the team
             data: { isRead: true },
         });
     }
 
-    async markAllAsRead(userId: string) {
-        // @ts-ignore
+    async markAllAsRead(teamId: string) {
         return this.prisma.notification.updateMany({
-            where: { userId, isRead: false },
+            where: { teamId, isRead: false },
             data: { isRead: true },
         });
     }
 
-    async getUnreadCount(userId: string) {
-        // @ts-ignore
+    async getUnreadCount(teamId: string) {
         return this.prisma.notification.count({
-            where: { userId, isRead: false },
+            where: { teamId, isRead: false },
         });
     }
 
@@ -103,6 +96,15 @@ export class NotificationService {
             throw new BadRequestException(
                 `Failed to send OTP via ${channel}: ${error.message}`
             );
+        }
+    }
+
+    async sendInvitation(recipient: string, teamName: string, token: string): Promise<void> {
+        try {
+            await this.emailStrategy.sendInvitation(recipient, teamName, token);
+        } catch (error: any) {
+            this.logger.error(`[INVITATION_ERROR] ${error.message}`);
+            throw new BadRequestException(`Failed to send invitation: ${error.message}`);
         }
     }
 }
