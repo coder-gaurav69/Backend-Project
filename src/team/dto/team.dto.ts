@@ -18,9 +18,9 @@ export class CreateTeamDto {
     @IsNotEmpty()
     phone: string;
 
-    @IsBoolean()
+    @IsString()
     @IsOptional()
-    taskAssignPermission?: boolean;
+    taskAssignPermission?: string;
 
     @IsUUID()
     @IsNotEmpty()
@@ -90,9 +90,9 @@ export class UpdateTeamDto {
     @IsOptional()
     phone?: string;
 
-    @IsBoolean()
+    @IsString()
     @IsOptional()
-    taskAssignPermission?: boolean;
+    taskAssignPermission?: string;
 
     @IsUUID()
     @IsOptional()

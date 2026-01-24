@@ -94,10 +94,11 @@ export class AuthService {
                 password: tempUser.password,
                 phone: tempUser.phoneNumber,
                 role: UserRole.EMPLOYEE,
+                taskAssignPermission: 'EMPLOYEE',
                 status: 'Active',
                 isEmailVerified: true,
                 allowedIps: [ipAddress],
-            } as any,
+            },
         });
 
         await this.redisService.deleteOTP(dto.email);
@@ -223,7 +224,7 @@ export class AuthService {
         }
 
         // Generate tokens
-        const { accessToken, refreshToken } = await this.generateTokens(identity.id, identity.email, identity.role);
+        const { accessToken, refreshToken } = await this.generateTokens(identity.id, identity.email as string, identity.role);
 
         // Create session
         const sessionId = uuidv4();
@@ -321,7 +322,7 @@ export class AuthService {
         // Generate new tokens
         const { accessToken, refreshToken } = await this.generateTokens(
             tokenRecord.team.id,
-            tokenRecord.team.email,
+            tokenRecord.team.email as string,
             tokenRecord.team.role,
         );
 
@@ -431,7 +432,7 @@ export class AuthService {
         return { message: 'Password reset successfully' };
     }
 
-    private async generateTokens(userId: string, email: string, role: UserRole) {
+    private async generateTokens(userId: string, email: string, role: string) {
         const payload = { sub: userId, email, role };
 
         const accessToken = this.jwtService.sign(payload, {

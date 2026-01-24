@@ -18,6 +18,7 @@ import { PdfModule } from './pdf/pdf.module';
 import { DemoModule } from './demo/demo.module';
 import { NotificationModule } from './notification/notification.module';
 import { TaskModule } from './task/task.module';
+import { RoleModule } from './role/role.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestTransformInterceptor } from './common/interceptors/request-transform.interceptor';
@@ -61,6 +62,7 @@ import { AppService } from './app.service';
     DemoModule,
     NotificationModule,
     TaskModule,
+    RoleModule,
   ],
   controllers: [AppController],
   providers: [
@@ -85,7 +87,7 @@ import { AppService } from './app.service';
       provide: APP_PIPE,
       useValue: new ValidationPipe({
         whitelist: true,
-        forbidNonWhitelisted: true,
+        forbidNonWhitelisted: false,
         transform: true,
         transformOptions: {
           enableImplicitConversion: true,

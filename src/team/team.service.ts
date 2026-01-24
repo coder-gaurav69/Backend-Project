@@ -22,7 +22,7 @@ import {
 } from './dto/team.dto';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { PaginatedResponse } from '../common/dto/api-response.dto';
-import { TeamStatus, LoginMethod, Prisma } from '@prisma/client';
+import { TeamStatus, LoginMethod, Prisma, UserRole } from '@prisma/client';
 import { buildMultiValueFilter } from '../common/utils/prisma-helper';
 import { NotificationService } from '../notification/notification.service';
 
@@ -88,7 +88,8 @@ export class TeamService {
                 teamName: toTitleCase(dto.teamName),
                 teamNo: dto.teamNo || generatedTeamNo,
                 remark: dto.remark ? toTitleCase(dto.remark) : undefined,
-                taskAssignPermission: dto.taskAssignPermission || false,
+                taskAssignPermission: dto.taskAssignPermission,
+                role: dto.role || UserRole.EMPLOYEE,
                 loginMethod: dto.loginMethod || LoginMethod.General,
                 status: dto.password ? (dto.status || TeamStatus.Active) : TeamStatus.Pending_Verification,
                 createdBy: userId,
@@ -401,7 +402,8 @@ export class TeamService {
                     teamName,
                     teamNo: finalTeamNo,
                     remark,
-                    taskAssignPermission: teamDto.taskAssignPermission || false,
+                    taskAssignPermission: teamDto.taskAssignPermission,
+                    role: teamDto.role || UserRole.EMPLOYEE,
                     loginMethod: teamDto.loginMethod || LoginMethod.General,
                     status: teamDto.status || TeamStatus.Active,
                     createdBy: userId,
@@ -584,7 +586,7 @@ export class TeamService {
                     teamName: row.teamName,
                     email: row.email,
                     phone: row.phone,
-                    taskAssignPermission: String(row.taskAssignPermission).toLowerCase() === 'true',
+                    taskAssignPermission: row.taskAssignPermission ? String(row.taskAssignPermission) : undefined,
                     clientGroupId: clientGroupId,
                     companyId: companyId,
                     locationId: locationId,

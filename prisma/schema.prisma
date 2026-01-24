@@ -276,7 +276,8 @@ model Team {
   teamName             String          @map("team_name")
   email                String          @unique
   phone                String?         @unique
-  taskAssignPermission Boolean         @default(false) @map("task_assign_permission")
+  role                 UserRole        @default(EMPLOYEE)
+  taskAssignPermission String?         @map("task_assign_permission")
   clientGroupId        String?         @map("client_group_id") @db.Uuid
   companyId            String?         @map("company_id") @db.Uuid
   locationId           String?         @map("location_id") @db.Uuid
@@ -299,7 +300,6 @@ model Team {
   password             String          @default("")
   firstName            String?         @map("first_name")
   lastName             String?         @map("last_name")
-  role                 UserRole        @default(EMPLOYEE)
   isEmailVerified      Boolean         @default(false) @map("is_email_verified")
   lastLoginAt          DateTime?       @map("last_login_at")
   lastLoginIp          String?         @map("last_login_ip")
@@ -605,4 +605,15 @@ enum TaskStatus {
   Pending
   ReviewPending
   Completed
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  permissions Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("roles")
 }
