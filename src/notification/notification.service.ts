@@ -224,11 +224,11 @@ export class NotificationService {
                         JSON.stringify(payload)
                     );
                 } catch (error: any) {
+                    this.logger.error(`Push notification failed for endpoint ${sub.endpoint}: ${error.message}`);
                     if (error.statusCode === 404 || error.statusCode === 410) {
-                        // Subscription expired or no longer valid
+                        this.logger.warn(`Subscription expired or invalid, deleting: ${sub.id}`);
                         await this.prisma.pushSubscription.delete({ where: { id: sub.id } });
                     }
-                    throw error;
                 }
             })
         );
