@@ -22,6 +22,7 @@ export class NotificationController {
 
     @Sse('stream')
     streamNotifications(@GetUser('id') userId: string): Observable<MessageEvent> {
+        console.log('🌊 SSE ENDPOINT HIT! UserId:', userId);
         return this.notificationService.getNotificationStream(userId);
     }
 

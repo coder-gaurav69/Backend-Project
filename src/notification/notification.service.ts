@@ -43,8 +43,11 @@ export class NotificationService {
             },
         });
 
+
         // Emit event for real-time notification
+        console.log('🔔 Creating notification for teamId:', teamId, 'Title:', data.title);
         this.eventEmitter.emit('notification.created', { teamId, notification });
+        console.log('📡 Event emitted: notification.created');
 
         // Send push notification for background
         this.sendPushNotification(teamId, {
@@ -106,9 +109,11 @@ export class NotificationService {
     }
 
     getNotificationStream(teamId: string): Observable<MessageEvent> {
+        console.log('📺 SSE Stream opened for teamId:', teamId);
         return new Observable((observer) => {
             // Send initial unread count
             this.getUnreadCount(teamId).then(count => {
+                console.log('📊 Initial unread count for', teamId, ':', count);
                 observer.next({
                     data: JSON.stringify({ type: 'unread-count', count })
                 } as MessageEvent);
@@ -116,13 +121,17 @@ export class NotificationService {
 
             // Listen for new notifications for this user
             const listener = (payload: any) => {
+                console.log('🎯 Event received - Target teamId:', payload.teamId, 'Listening teamId:', teamId);
                 if (payload.teamId === teamId) {
+                    console.log('✅ TeamId MATCH! Sending notification to client');
                     observer.next({
                         data: JSON.stringify({
                             type: 'new-notification',
                             notification: payload.notification
                         })
                     } as MessageEvent);
+                } else {
+                    console.log('❌ TeamId MISMATCH! Not sending to this client');
                 }
             };
 
