@@ -15,7 +15,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             jwtFromRequest: ExtractJwt.fromExtractors([
                 ExtractJwt.fromAuthHeaderAsBearerToken(),
                 (request: any) => {
-                    return request?.query?.token;
+                    return request?.cookies?.['accessToken'] || request?.query?.token;
                 },
             ]),
             ignoreExpiration: false,
@@ -39,6 +39,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
             throw new UnauthorizedException('Account not found or inactive');
         }
 
-        return identity;
+        return {
+            ...identity,
+            sessionId: payload.sid
+        };
     }
 }

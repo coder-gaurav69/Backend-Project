@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Req, UseGuards, Get, Patch } from '@nestjs/common';
+import { Controller, Post, Body, Req, Res, UseGuards, Get, Patch } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import {
     RegisterDto,
@@ -12,7 +12,7 @@ import {
     ResendOtpDto,
     SetPasswordDto,
 } from './dto/auth.dto';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GetUser } from './decorators/get-user.decorator';
 
@@ -33,7 +33,11 @@ export class AuthController {
     }
 
     @Post('login')
-    async login(@Body() dto: LoginDto, @Req() req: Request) {
+    async login(
+        @Body() dto: LoginDto,
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response
+    ) {
         const ipAddress = req.ip || req.socket.remoteAddress || '';
         const userAgent = req.headers['user-agent'];
 
@@ -47,7 +51,15 @@ export class AuthController {
                 otp: '', // Not needed when OTP is disabled
             };
 
-            return this.authService.verifyLogin(verifyDto, ipAddress, userAgent);
+            const result = await this.authService.verifyLogin(verifyDto, ipAddress, userAgent);
+            this.setCookies(res, result.accessToken, result.refreshToken);
+
+            // Ensure otpSkipped is sent back so FE knows to bypass OTP Screen
+            const { accessToken, refreshToken, ...userPart } = result;
+            return {
+                ...userPart,
+                otpSkipped: true
+            };
         }
 
         // OTP is enabled - return the standard response asking for OTP
@@ -55,21 +67,50 @@ export class AuthController {
     }
 
     @Post('verify-login')
-    async verifyLogin(@Body() dto: VerifyLoginDto, @Req() req: Request) {
+    async verifyLogin(
+        @Body() dto: VerifyLoginDto,
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response
+    ) {
         const ipAddress = req.ip || req.socket.remoteAddress || '';
         const userAgent = req.headers['user-agent'];
-        return this.authService.verifyLogin(dto, ipAddress, userAgent);
+        const result = await this.authService.verifyLogin(dto, ipAddress, userAgent);
+
+        this.setCookies(res, result.accessToken, result.refreshToken);
+
+        // Don't send tokens in body anymore
+        const { accessToken, refreshToken, ...userPart } = result;
+        return userPart;
     }
 
     @Post('refresh')
-    async refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {
+    async refresh(
+        @Body() dto: RefreshTokenDto,
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response
+    ) {
+        // Fallback for dto.refreshToken if not provided in body (get from cookie)
+        const rfToken = dto.refreshToken || req.cookies['refreshToken'];
+        if (!rfToken) {
+            throw new Error('Refresh token missing');
+        }
+
         const ipAddress = req.ip || req.socket.remoteAddress || '';
-        return this.authService.refreshTokens(dto, ipAddress);
+        const result = await this.authService.refreshTokens({ refreshToken: rfToken }, ipAddress);
+
+        this.setCookies(res, result.accessToken, result.refreshToken);
+
+        return { message: 'Token refreshed' };
     }
 
     @Post('logout')
     @UseGuards(JwtAuthGuard)
-    async logout(@GetUser('id') userId: string, @Body('sessionId') sessionId: string) {
+    async logout(
+        @GetUser('id') userId: string,
+        @Body('sessionId') sessionId: string,
+        @Res({ passthrough: true }) res: Response
+    ) {
+        this.clearCookies(res);
         return this.authService.logout(userId, sessionId);
     }
 
@@ -97,14 +138,63 @@ export class AuthController {
     }
 
     @Post('set-password')
-    async setPassword(@Body() dto: SetPasswordDto, @Req() req: Request) {
+    async setPassword(
+        @Body() dto: SetPasswordDto,
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response
+    ) {
         const ipAddress = req.ip || req.socket.remoteAddress || '';
+        // Note: setPassword in auth.service doesn't return tokens yet,
+        // but it could. For now we just let them log in manually after setting password.
         return this.authService.setPassword(dto, ipAddress);
+    }
+
+    private setCookies(res: Response, accessToken: string, refreshToken: string) {
+        const isProduction = process.env.NODE_ENV === 'production';
+        const domain = process.env.COOKIE_DOMAIN || 'localhost';
+
+        const cookieOptions: any = {
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: isProduction ? 'strict' : 'lax',
+            maxAge: 30 * 24 * 60 * 60 * 1000,
+            path: '/',
+        };
+
+        // Only set domain if it's NOT localhost to avoid issues on subdomains
+        if (domain !== 'localhost') {
+            cookieOptions.domain = domain;
+        }
+
+        res.cookie('accessToken', accessToken, cookieOptions);
+        res.cookie('refreshToken', refreshToken, cookieOptions);
+    }
+
+    private clearCookies(res: Response) {
+        const isProduction = process.env.NODE_ENV === 'production';
+        const domain = process.env.COOKIE_DOMAIN || 'localhost';
+
+        const cookieOptions: any = {
+            path: '/',
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: isProduction ? 'strict' : 'lax',
+        };
+
+        if (domain !== 'localhost') {
+            cookieOptions.domain = domain;
+        }
+
+        res.clearCookie('accessToken', cookieOptions);
+        res.clearCookie('refreshToken', cookieOptions);
     }
 
     @Get('profile')
     @UseGuards(JwtAuthGuard)
     getProfile(@GetUser() user: any) {
-        return { user };
+        return {
+            user,
+            sessionId: user.sessionId
+        };
     }
 }

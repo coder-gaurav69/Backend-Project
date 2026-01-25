@@ -127,11 +127,14 @@ export class AuthService {
             throw new UnauthorizedException('Account is not active');
         }
 
-        const otpEnabled = this.configService.get('OTP_ENABLED', 'true') === 'true';
+        const otpEnabledSetting = this.configService.get('OTP_ENABLED', 'true') === 'true';
+        const isAdmin = identity.role === UserRole.ADMIN || identity.role === UserRole.SUPER_ADMIN;
 
-        if (!otpEnabled) {
-            // OTP is disabled - skip OTP flow and proceed directly to login
-            this.logger.log(`OTP disabled - Direct login for ${identity.email}`);
+        // Skip OTP if disabled in settings OR if user is an ADMIN
+        if (!otpEnabledSetting || isAdmin) {
+            // Check for explicit 'false' in case it's a string from env
+            const reason = isAdmin ? 'Admin role bypass' : 'OTP disabled in settings';
+            this.logger.log(`[AUTH] Skipping OTP for ${identity.email} (${reason})`);
 
             // Enhanced IP Check (User-specific + Global Whitelist)
             const allowedIps = identity.allowedIps || [];
@@ -180,27 +183,30 @@ export class AuthService {
     }
 
     async verifyLogin(dto: VerifyLoginDto, ipAddress: string, userAgent?: string) {
-        // Check if OTP is enabled via environment variable (default: true)
-        const otpEnabled = this.configService.get('OTP_ENABLED', 'true') === 'true';
-
-        if (otpEnabled) {
-            // OTP is enabled - validate OTP
-            const storedOtp = await this.redisService.getLoginOTP(dto.email);
-
-            if (!storedOtp || storedOtp !== dto.otp) {
-                throw new UnauthorizedException('Invalid or expired OTP');
-            }
-        } else {
-            // OTP is disabled - skip OTP validation
-            this.logger.log(`OTP disabled - Skipping OTP validation for ${dto.email}`);
-        }
-
         const identity = await this.prisma.team.findUnique({
             where: { email: dto.email },
         });
 
         if (!identity) {
             throw new UnauthorizedException('Account not found');
+        }
+
+        // Check if OTP is enabled via environment variable (default: true)
+        const otpEnabledSetting = this.configService.get('OTP_ENABLED', 'true') === 'true';
+        const isAdmin = identity.role === UserRole.ADMIN || identity.role === UserRole.SUPER_ADMIN;
+
+        if (otpEnabledSetting && !isAdmin) {
+            // OTP is enabled and user is NOT an admin - validate OTP
+            const storedOtp = await this.redisService.getLoginOTP(dto.email);
+
+            if (!storedOtp || storedOtp !== dto.otp) {
+                throw new UnauthorizedException('Invalid or expired OTP');
+            }
+            this.logger.log(`[AUTH] OTP verified for ${dto.email}`);
+        } else {
+            // OTP is disabled OR user is an admin - skip OTP validation
+            const reason = isAdmin ? 'Admin role bypass' : 'OTP disabled in settings';
+            this.logger.log(`[AUTH] Skipping OTP validation for ${dto.email} (${reason})`);
         }
 
         // Enhanced IP Check (User-specific + Global Whitelist)
@@ -223,12 +229,12 @@ export class AuthService {
             throw new UnauthorizedException('Access denied. Unrecognized IP address.');
         }
 
-        // Generate tokens
-        const { accessToken, refreshToken } = await this.generateTokens(identity.id, identity.email as string, identity.role);
-
         // Create session
         const sessionId = uuidv4();
         const sessionExpiry = parseInt(this.configService.get('SESSION_EXPIRATION', '2592000000')) / 1000;
+
+        // Generate tokens with sessionId
+        const { accessToken, refreshToken } = await this.generateTokens(identity.id, identity.email as string, identity.role, sessionId);
 
         await this.prisma.session.create({
             data: {
@@ -261,7 +267,7 @@ export class AuthService {
         await this.redisService.setRefreshToken(refreshToken, identity.id, refreshExpiry);
 
         // Clean up OTP if it was used
-        if (otpEnabled) {
+        if (otpEnabledSetting && !isAdmin) {
             await this.redisService.deleteLoginOTP(identity.email);
         }
 
@@ -274,7 +280,7 @@ export class AuthService {
             },
         });
 
-        const loginMethod = otpEnabled ? 'OTP' : 'Direct (OTP disabled)';
+        const loginMethod = (otpEnabledSetting && !isAdmin) ? 'OTP' : 'Direct (OTP disabled/Admin bypass)';
         await this.logActivity(identity.id, 'LOGIN', `Account logged in via ${loginMethod}`, ipAddress, true);
 
         return {
@@ -432,8 +438,8 @@ export class AuthService {
         return { message: 'Password reset successfully' };
     }
 
-    private async generateTokens(userId: string, email: string, role: string) {
-        const payload = { sub: userId, email, role };
+    private async generateTokens(userId: string, email: string, role: string, sessionId?: string) {
+        const payload = { sub: userId, email, role, sid: sessionId };
 
         const accessToken = this.jwtService.sign(payload, {
             secret: this.configService.get('JWT_ACCESS_SECRET'),
