@@ -155,8 +155,8 @@ export class AuthController {
 
         const cookieOptions: any = {
             httpOnly: true,
-            secure: isProduction ? true : false, // Must be true for SameSite=None
-            sameSite: isProduction ? 'none' : 'lax', // None allows cross-site
+            secure: isProduction, // Strict true in production
+            sameSite: isProduction ? 'none' : 'lax', // Must be 'none' for cross-site
             maxAge: 30 * 24 * 60 * 60 * 1000,
             path: '/',
         };
@@ -177,7 +177,7 @@ export class AuthController {
         const cookieOptions: any = {
             path: '/',
             httpOnly: true,
-            secure: isProduction ? true : false,
+            secure: isProduction,
             sameSite: isProduction ? 'none' : 'lax',
         };
 

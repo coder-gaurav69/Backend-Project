@@ -81,7 +81,28 @@ async function main() {
         console.error(`❌ SMTP Error: ${err.message}`);
         console.error(err);
     }
-    console.log('Done.');
+    // 3. Test Resend (if configured)
+    const resendKey = process.env.RESEND_API_KEY;
+    if (resendKey) {
+        console.log('\n3. Testing Resend API...');
+        try {
+            const { Resend } = require('resend');
+            const resend = new Resend(resendKey);
+            const data = await resend.emails.send({
+                from: 'onboarding@resend.dev',
+                to: email,
+                subject: 'Test Email - Resend API',
+                html: `<p>Resend working! Token: ${token}</p>`
+            });
+            console.log('✅ Resend Email sent:', data);
+        } catch (e: any) {
+            console.error('❌ Resend Error:', e.message);
+        }
+    } else {
+        console.log('\n3. Skipping Resend (No API Key found)');
+    }
+
+    console.log('\nDone.');
 }
 
 main().catch(console.error);

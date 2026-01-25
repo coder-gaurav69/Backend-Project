@@ -1,21 +1,24 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
-import * as https from 'https';
+import { Resend } from 'resend';
 import { NotificationStrategy } from '../interfaces/notification-strategy.interface';
 import { OtpChannel } from '../../auth/dto/auth.dto';
 
 @Injectable()
 export class EmailStrategy implements NotificationStrategy, OnModuleInit {
     private transporter: nodemailer.Transporter | null = null;
+    private resend: Resend | null = null;
     private readonly logger = new Logger(EmailStrategy.name);
 
     constructor(private configService: ConfigService) {
-        this.initializeTransporter();
+        this.initializeEmailProvider();
     }
 
     async onModuleInit() {
-        if (this.transporter) {
+        if (this.resend) {
+            this.logger.log('✅ Resend API initialized for email delivery');
+        } else if (this.transporter) {
             try {
                 await this.transporter.verify();
                 this.logger.log(`✅ SMTP connection verified successfully`);
@@ -24,16 +27,24 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
                 this.logger.warn('⚠️  Email OTP delivery may fail. Please check your SMTP credentials.');
             }
         } else {
-            this.logger.warn('⚠️  No SMTP provider configured. Email delivery will fail.');
+            this.logger.warn('⚠️  No Email provider (Resend/SMTP) configured. Email delivery will fail.');
         }
     }
 
-    private initializeTransporter() {
+    private initializeEmailProvider() {
+        // 1. Try Resend First (Preferred for Production/Reliability)
+        const resendApiKey = this.configService.get('RESEND_API_KEY');
+        if (resendApiKey) {
+            this.logger.log('📧 Initializing Resend API...');
+            this.resend = new Resend(resendApiKey);
+            return;
+        }
+
+        // 2. Fallback to SMTP
         const smtpHost = this.configService.get('SMTP_HOST');
         const smtpUser = this.configService.get('SMTP_USER');
         const smtpPass = this.configService.get('SMTP_PASS');
         const smtpPort = parseInt(this.configService.get('SMTP_PORT', '587'));
-        // Correctly handle boolean from env string
         const smtpSecure = this.configService.get('SMTP_SECURE') === 'true' || smtpPort === 465;
 
         if (!smtpHost || !smtpUser || !smtpPass) {
@@ -65,52 +76,92 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
     }
 
     async sendOtp(recipient: string, otp: string): Promise<boolean> {
-        if (!this.transporter) {
-            this.logger.error('❌ Cannot send email: SMTP not configured.');
-            throw new Error('SMTP provider not configured. Please set SMTP settings.');
-        }
-
         const startTime = Date.now();
-        try {
-            const fromEmail = this.configService.get('SMTP_FROM', '"HRMS Support" <noreply@yourapp.com>');
-            const info = await this.transporter.sendMail({
-                from: fromEmail,
-                to: recipient,
-                subject: '🔐 Your HRMS Verification Code',
-                html: this.getEmailHtml(otp),
-            });
+        const fromEmail = this.configService.get('SMTP_FROM', 'onboarding@resend.dev'); // Default Resend Sender
+        const subject = '🔐 Your HRMS Verification Code';
+        const html = this.getEmailHtml(otp);
 
-            this.logger.log(`✅ OTP sent via SMTP to ${recipient} in ${Date.now() - startTime}ms`);
-            return true;
+        try {
+            if (this.resend) {
+                // Use Resend
+                const data = await this.resend.emails.send({
+                    from: fromEmail,
+                    to: recipient,
+                    subject: subject,
+                    html: html,
+                });
+
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
+
+                this.logger.log(`✅ OTP sent via Resend to ${recipient} (ID: ${data.data?.id}) in ${Date.now() - startTime}ms`);
+                return true;
+            }
+
+            if (this.transporter) {
+                // Use SMTP
+                await this.transporter.sendMail({
+                    from: fromEmail,
+                    to: recipient,
+                    subject: subject,
+                    html: html,
+                });
+                this.logger.log(`✅ OTP sent via SMTP to ${recipient} in ${Date.now() - startTime}ms`);
+                return true;
+            }
+
+            throw new Error('No email provider configured');
+
         } catch (error) {
-            this.logger.error(`❌ SMTP failed for ${recipient}: ${error.message}`);
+            this.logger.error(`❌ Email failed for ${recipient}: ${error.message}`);
             throw new Error(`Email delivery failed: ${error.message}`);
         }
     }
 
     async sendInvitation(recipient: string, teamName: string, token: string): Promise<boolean> {
-        if (!this.transporter) {
-            this.logger.error('❌ Cannot send email: SMTP not configured.');
-            throw new Error('SMTP provider not configured.');
-        }
-
         const startTime = Date.now();
+        const fromEmail = this.configService.get('SMTP_FROM', 'onboarding@resend.dev');
+        const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
+        const invitationLink = `${frontendUrl}/set-password?token=${token}&email=${recipient}`;
+        const subject = '🤝 Welcome to Mission HRMS - Set Your Password';
+        const html = this.getInvitationHtml(teamName, invitationLink);
+
         try {
-            const fromEmail = this.configService.get('SMTP_FROM', '"HRMS Support" <noreply@yourapp.com>');
-            const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
-            const invitationLink = `${frontendUrl}/set-password?token=${token}&email=${recipient}`;
+            if (this.resend) {
+                // Use Resend
+                const data = await this.resend.emails.send({
+                    from: fromEmail,
+                    to: recipient,
+                    subject: subject,
+                    html: html,
+                });
 
-            await this.transporter.sendMail({
-                from: fromEmail,
-                to: recipient,
-                subject: '🤝 Welcome to Mission HRMS - Set Your Password',
-                html: this.getInvitationHtml(teamName, invitationLink),
-            });
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
 
-            this.logger.log(`✅ Invitation sent to ${recipient} in ${Date.now() - startTime}ms`);
-            return true;
+                this.logger.log(`✅ Invitation sent via Resend to ${recipient} (ID: ${data.data?.id}) in ${Date.now() - startTime}ms`);
+                return true;
+            }
+
+            if (this.transporter) {
+                // Use SMTP
+                await this.transporter.sendMail({
+                    from: fromEmail,
+                    to: recipient,
+                    subject: subject,
+                    html: html,
+                });
+
+                this.logger.log(`✅ Invitation sent via SMTP to ${recipient} in ${Date.now() - startTime}ms`);
+                return true;
+            }
+
+            throw new Error('No email provider configured');
+
         } catch (error) {
-            this.logger.error(`❌ SMTP Failed for invitation to ${recipient}: ${error.message}`);
+            this.logger.error(`❌ Invitation failed for ${recipient}: ${error.message}`);
             throw new Error(`Invitation delivery failed: ${error.message}`);
         }
     }
