@@ -40,6 +40,7 @@ export class NotificationService {
                 description: data.description,
                 type: data.type || 'SYSTEM',
                 metadata: data.metadata || {},
+                isRead: false, // IMPORTANT: Set as unread
             },
         });
 
