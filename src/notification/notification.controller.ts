@@ -1,8 +1,9 @@
-import { Controller, Get, Patch, Param, UseGuards, Sse, MessageEvent } from '@nestjs/common';
+import { Controller, Get, Patch, Param, UseGuards, Sse, MessageEvent, Post, Body, Delete } from '@nestjs/common';
 import { NotificationService } from './notification.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Observable } from 'rxjs';
+import { CreatePushSubscriptionDto } from './dto/create-push-subscription.dto';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -32,5 +33,15 @@ export class NotificationController {
     @Patch('mark-all-read')
     markAllAsRead(@GetUser('id') userId: string) {
         return this.notificationService.markAllAsRead(userId);
+    }
+
+    @Post('subscribe')
+    subscribe(@GetUser('id') userId: string, @Body() dto: CreatePushSubscriptionDto) {
+        return this.notificationService.createPushSubscription(userId, dto);
+    }
+
+    @Delete('unsubscribe')
+    unsubscribe(@GetUser('id') userId: string, @Body('endpoint') endpoint: string) {
+        return this.notificationService.deletePushSubscription(userId, endpoint);
     }
 }

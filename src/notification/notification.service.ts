@@ -1,4 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import * as webpush from 'web-push';
+import { ConfigService } from '@nestjs/config';
 import { NotificationStrategy } from './interfaces/notification-strategy.interface';
 import { EmailStrategy } from './strategies/email.strategy';
 import { OtpChannel } from '../auth/dto/auth.dto';
@@ -18,8 +20,16 @@ export class NotificationService {
         private prisma: PrismaService,
         private emailStrategy: EmailStrategy,
         private eventEmitter: EventEmitter2,
+        private configService: ConfigService,
     ) {
         this.strategies.set(OtpChannel.EMAIL, emailStrategy);
+
+        // Setup web-push
+        webpush.setVapidDetails(
+            `mailto:${this.configService.get('VAPID_EMAIL', 'noreply@yourapp.com')}`,
+            this.configService.get('VAPID_PUBLIC_KEY'),
+            this.configService.get('VAPID_PRIVATE_KEY')
+        );
     }
 
     async createNotification(teamId: string, data: { title: string; description: string; type?: string; metadata?: any }) {
@@ -35,6 +45,13 @@ export class NotificationService {
 
         // Emit event for real-time notification
         this.eventEmitter.emit('notification.created', { teamId, notification });
+
+        // Send push notification for background
+        this.sendPushNotification(teamId, {
+            title: data.title,
+            body: data.description,
+            data: { id: notification.id, ...data.metadata }
+        }).catch(err => this.logger.error(`Push fail: ${err.message}`));
 
         return notification;
     }
@@ -156,5 +173,56 @@ export class NotificationService {
             this.logger.error(`[INVITATION_ERROR] ${error.message}`);
             throw new BadRequestException(`Failed to send invitation: ${error.message}`);
         }
+    }
+    async createPushSubscription(teamId: string, dto: any) {
+        return this.prisma.pushSubscription.upsert({
+            where: { endpoint: dto.endpoint },
+            update: { teamId },
+            create: {
+                teamId,
+                endpoint: dto.endpoint,
+                p256dh: dto.keys.p256dh,
+                auth: dto.keys.auth,
+            },
+        });
+    }
+
+    async deletePushSubscription(teamId: string, endpoint: string) {
+        return this.prisma.pushSubscription.deleteMany({
+            where: { teamId, endpoint },
+        });
+    }
+
+    async sendPushNotification(teamId: string, payload: any) {
+        const subscriptions = await this.prisma.pushSubscription.findMany({
+            where: { teamId },
+        });
+
+        const results = await Promise.all(
+            subscriptions.map(async (sub) => {
+                const pushSubscription = {
+                    endpoint: sub.endpoint,
+                    keys: {
+                        p256dh: sub.p256dh,
+                        auth: sub.auth,
+                    },
+                };
+
+                try {
+                    await webpush.sendNotification(
+                        pushSubscription,
+                        JSON.stringify(payload)
+                    );
+                } catch (error: any) {
+                    if (error.statusCode === 404 || error.statusCode === 410) {
+                        // Subscription expired or no longer valid
+                        await this.prisma.pushSubscription.delete({ where: { id: sub.id } });
+                    }
+                    throw error;
+                }
+            })
+        );
+
+        return results;
     }
 }
