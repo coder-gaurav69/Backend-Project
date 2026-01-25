@@ -32,8 +32,7 @@ async function bootstrap() {
   // Trust Proxy for secure cookies behind load balancers (Vercel/Render/Heroku)
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
-  // Trust Proxy for secure cookies behind load balancers (Vercel/Render/Heroku)
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
 
   // Compression for faster API responses
   app.use(compression());
