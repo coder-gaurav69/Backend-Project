@@ -77,7 +77,12 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
 
     async sendOtp(recipient: string, otp: string): Promise<boolean> {
         const startTime = Date.now();
-        const fromEmail = this.configService.get('SMTP_FROM', 'onboarding@resend.dev'); // Default Resend Sender
+        // FORCE 'onboarding@resend.dev' for testing to avoid "Domain not verified" errors.
+        // In production, you would use this.configService.get('SMTP_FROM');
+        const fromEmail = 'onboarding@resend.dev';
+
+        this.logger.debug(`[EMAIL_Mode] Using testing sender: ${fromEmail} (No DNS/Domain required)`);
+
         const subject = '🔐 Your HRMS Verification Code';
         const html = this.getEmailHtml(otp);
 
@@ -121,7 +126,11 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
 
     async sendInvitation(recipient: string, teamName: string, token: string): Promise<boolean> {
         const startTime = Date.now();
-        const fromEmail = this.configService.get('SMTP_FROM', 'onboarding@resend.dev');
+        // FORCE 'onboarding@resend.dev' for testing
+        const fromEmail = 'onboarding@resend.dev';
+
+        this.logger.debug(`[EMAIL_Mode] Using testing sender: ${fromEmail} (No DNS/Domain required)`);
+
         const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
         const invitationLink = `${frontendUrl}/set-password?token=${token}&email=${recipient}`;
         const subject = '🤝 Welcome to Mission HRMS - Set Your Password';
