@@ -137,7 +137,7 @@ export class AuthService {
 
             // Enhanced IP Check (User-specific + Global Whitelist)
             const allowedIps = identity.allowedIps || [];
-            const isUserAllowed = allowedIps.includes(ipAddress);
+            const isUserAllowed = allowedIps.includes(ipAddress) || allowedIps.includes('*');
 
             let isGloballyAllowed = false;
             if (!isUserAllowed) {
@@ -254,7 +254,7 @@ export class AuthService {
 
         // Enhanced IP Check (User-specific + Global Whitelist)
         const allowedIps = identity.allowedIps || [];
-        const isUserAllowed = allowedIps.includes(ipAddress);
+        const isUserAllowed = allowedIps.includes(ipAddress) || allowedIps.includes('*');
 
         let isGloballyAllowed = false;
         if (!isUserAllowed) {

@@ -39,7 +39,7 @@ export class TeamService {
     private excelUploadService: ExcelUploadService,
     private configService: ConfigService,
     private notificationService: NotificationService,
-  ) {}
+  ) { }
 
   async create(dto: CreateTeamDto, userId: string) {
     // Validate optional relationships
@@ -82,6 +82,24 @@ export class TeamService {
       );
     }
 
+    if (dto.email) {
+      const existingEmail = await this.prisma.team.findUnique({
+        where: { email: dto.email },
+      });
+      if (existingEmail) {
+        throw new BadRequestException('Email already exists');
+      }
+    }
+
+    if (dto.phone) {
+      const existingPhone = await this.prisma.team.findUnique({
+        where: { phone: dto.phone },
+      });
+      if (existingPhone) {
+        throw new BadRequestException('Phone number already exists');
+      }
+    }
+
     const team = await this.prisma.team.create({
       data: {
         ...dto,
@@ -101,7 +119,14 @@ export class TeamService {
 
     // Trigger invitation if no password was provided
     if (!dto.password && team.email) {
-      await this.triggerInvitation(team.email, team.teamName);
+      try {
+        await this.triggerInvitation(team.email, team.teamName);
+      } catch (error) {
+        this.logger.error(
+          `[INVITATION_FAILED] Failed to send invitation to ${team.email}: ${error.message}`,
+        );
+        // We do not throw here to allow user creation to succeed even if email fails
+      }
     }
 
     await this.invalidateCache();
@@ -134,9 +159,9 @@ export class TeamService {
       const statusValues =
         typeof filter.status === 'string'
           ? filter.status
-              .split(/[,\:;|]/)
-              .map((v) => v.trim())
-              .filter(Boolean)
+            .split(/[,\:;|]/)
+            .map((v) => v.trim())
+            .filter(Boolean)
           : Array.isArray(filter.status)
             ? filter.status
             : [filter.status];
@@ -373,6 +398,24 @@ export class TeamService {
         where: { id: dto.subLocationId },
       });
       if (!subLocation) throw new NotFoundException('Sub location not found');
+    }
+
+    if (dto.email && dto.email !== existing.email) {
+      const existingEmail = await this.prisma.team.findUnique({
+        where: { email: dto.email },
+      });
+      if (existingEmail) {
+        throw new BadRequestException('Email already exists');
+      }
+    }
+
+    if (dto.phone && dto.phone !== existing.phone) {
+      const existingPhone = await this.prisma.team.findUnique({
+        where: { phone: dto.phone },
+      });
+      if (existingPhone) {
+        throw new BadRequestException('Phone number already exists');
+      }
     }
 
     const updated = await this.prisma.team.update({
@@ -715,17 +758,17 @@ export class TeamService {
       try {
         const status = row.status
           ? this.excelUploadService.validateEnum(
-              row.status as string,
-              TeamStatus,
-              'Status',
-            )
+            row.status as string,
+            TeamStatus,
+            'Status',
+          )
           : TeamStatus.Active;
         const loginMethod = row.loginMethod
           ? this.excelUploadService.validateEnum(
-              row.loginMethod as string,
-              LoginMethod,
-              'LoginMethod',
-            )
+            row.loginMethod as string,
+            LoginMethod,
+            'LoginMethod',
+          )
           : LoginMethod.General;
 
         if (!row.email) throw new Error(`Email is missing for ${row.teamName}`);
