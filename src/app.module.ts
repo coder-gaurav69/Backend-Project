@@ -19,6 +19,7 @@ import { DemoModule } from './demo/demo.module';
 import { NotificationModule } from './notification/notification.module';
 import { TaskModule } from './task/task.module';
 import { RoleModule } from './role/role.module';
+import { StickyNoteModule } from './sticky-note/sticky-note.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { RequestTransformInterceptor } from './common/interceptors/request-transform.interceptor';
@@ -63,6 +64,7 @@ import { AppService } from './app.service';
     NotificationModule,
     TaskModule,
     RoleModule,
+    StickyNoteModule,
   ],
   controllers: [AppController],
   providers: [
