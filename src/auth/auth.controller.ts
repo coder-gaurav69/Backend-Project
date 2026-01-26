@@ -11,6 +11,7 @@ import {
     ResetPasswordDto,
     ResendOtpDto,
     SetPasswordDto,
+    UpdateProfileDto,
 } from './dto/auth.dto';
 import { Request, Response } from 'express';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -203,5 +204,16 @@ export class AuthController {
             user,
             sessionId: user.sessionId
         };
+    }
+
+    @Patch('profile')
+    @UseGuards(JwtAuthGuard)
+    async updateProfile(
+        @GetUser('id') userId: string,
+        @Body() dto: UpdateProfileDto,
+        @Req() req: Request,
+    ) {
+        const ipAddress = req.ip || req.socket.remoteAddress || '';
+        return this.authService.updateProfile(userId, dto, ipAddress);
     }
 }

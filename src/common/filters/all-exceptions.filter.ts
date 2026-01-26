@@ -33,13 +33,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
                 error = (exceptionResponse as any).error;
             }
         } else if (exception instanceof Error) {
-            message = exception.message;
-            error = exception.stack;
+            // Log full error for internal tracking
+            this.logger.error(`[INTERNAL_ERROR] ${exception.message}`, exception.stack);
+
+            // Hide internal technical details from the user
+            if (exception.constructor.name.includes('Prisma')) {
+                message = 'A database error occurred. Please try again later.';
+            } else {
+                message = 'A system error occurred. Our team has been notified.';
+            }
         }
 
         this.logger.error(
             `${request.method} ${request.url} - Status: ${status} - Message: ${message}`,
-            exception instanceof Error ? exception.stack : '',
         );
 
         const apiResponse = ApiResponse.error(message, error);

@@ -14,6 +14,7 @@ import {
     ChangePasswordDto,
     ForgotPasswordDto,
     ResetPasswordDto,
+    UpdateProfileDto,
     OtpChannel,
 } from './dto/auth.dto';
 import { NotificationService } from '../notification/notification.service';
@@ -541,5 +542,37 @@ export class AuthService {
         await this.logActivity(team.id, 'PASSWORD_CHANGE', 'Team password set via invitation', ipAddress, true);
 
         return { message: 'Password set successfully. You can now login.' };
+    }
+
+    async updateProfile(userId: string, dto: UpdateProfileDto, ipAddress: string) {
+        const team = await this.prisma.team.findUnique({ where: { id: userId } });
+        if (!team) {
+            throw new BadRequestException('Account not found');
+        }
+
+        const updated = await this.prisma.team.update({
+            where: { id: userId },
+            data: {
+                ...dto,
+            },
+        });
+
+        await this.logActivity(userId, 'UPDATE', 'Profile updated', ipAddress, true);
+
+        return {
+            message: 'Profile updated successfully',
+            user: {
+                id: updated.id,
+                email: updated.email,
+                firstName: updated.firstName,
+                lastName: updated.lastName,
+                avatar: updated.avatar,
+                phone: updated.phone,
+                address: updated.address,
+                city: updated.city,
+                postcode: updated.postcode,
+                country: updated.country,
+            }
+        };
     }
 }

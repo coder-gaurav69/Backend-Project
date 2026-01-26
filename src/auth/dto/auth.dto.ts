@@ -98,3 +98,37 @@ export class SetPasswordDto {
     @MinLength(6)
     password: string;
 }
+
+export class UpdateProfileDto {
+    @IsString()
+    @IsOptional()
+    firstName?: string;
+
+    @IsString()
+    @IsOptional()
+    lastName?: string;
+
+    @IsString()
+    @IsOptional()
+    phone?: string;
+
+    @IsString()
+    @IsOptional()
+    avatar?: string;
+
+    @IsString()
+    @IsOptional()
+    address?: string;
+
+    @IsString()
+    @IsOptional()
+    city?: string;
+
+    @IsString()
+    @IsOptional()
+    postcode?: string;
+
+    @IsString()
+    @IsOptional()
+    country?: string;
+}

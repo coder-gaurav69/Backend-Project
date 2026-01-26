@@ -313,6 +313,11 @@ model Team {
   isEmailVerified        Boolean            @default(false) @map("is_email_verified")
   lastLoginAt            DateTime?          @map("last_login_at")
   lastLoginIp            String?            @map("last_login_ip")
+  avatar                 String?
+  address                String?
+  city                   String?
+  postcode               String?
+  country                String?
   passwordChangedAt      DateTime?          @map("password_changed_at")
   allowedIps             String[]           @default([]) @map("allowed_ips")
   deletedAt              DateTime?          @map("deleted_at")
