@@ -299,7 +299,7 @@ export class TaskService {
         return this.sortTaskDates(updated);
     }
 
-    async submitForReview(id: string, remark: string, userId: string) {
+    async submitForReview(id: string, remark: string, userId: string, files?: Express.Multer.File[]) {
         const task = await this.prisma.pendingTask.findUnique({
             where: { id },
             include: { creator: true }
@@ -308,13 +308,32 @@ export class TaskService {
         if (!task) throw new NotFoundException('Task not found');
         if (task.taskStatus !== TaskStatus.Pending) throw new BadRequestException('Only pending tasks can be submitted for review');
 
+        let document = task.document;
+        if (files && files.length > 0) {
+            const fs = await import('fs');
+            const path = await import('path');
+            const uploadDir = path.join(process.cwd(), 'uploads');
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+            const savedPaths: string[] = [];
+            for (const file of files) {
+                const fileName = `${task.taskNo}_${Date.now()}_${file.originalname}`;
+                const uploadPath = path.join(uploadDir, fileName);
+                fs.writeFileSync(uploadPath, file.buffer);
+                savedPaths.push(`/uploads/${fileName}`);
+            }
+            const existingDocs = task.document ? task.document.split(',') : [];
+            document = [...existingDocs, ...savedPaths].join(',');
+        }
+
         const updated = await this.prisma.pendingTask.update({
             where: { id },
             data: {
                 taskStatus: TaskStatus.ReviewPending,
                 remarkChat: remark,
                 workingBy: userId,
-                reviewedTime: { push: new Date() }
+                reviewedTime: { push: new Date() },
+                document: document
             },
             include: { creator: true, project: true }
         });
@@ -333,7 +352,7 @@ export class TaskService {
         return this.sortTaskDates(updated);
     }
 
-    async finalizeCompletion(id: string, remark: string, userId: string) {
+    async finalizeCompletion(id: string, remark: string, userId: string, files?: Express.Multer.File[]) {
         const task = await this.prisma.pendingTask.findUnique({
             where: { id },
             include: { project: true, assignee: true, creator: true, targetGroup: true, targetTeam: true, worker: true }
@@ -342,8 +361,23 @@ export class TaskService {
         if (!task) throw new NotFoundException('Task not found');
         if (task.taskStatus !== TaskStatus.ReviewPending) throw new BadRequestException('Only tasks in review can be finalized');
 
-        // Security: Usually only creator/admin can finalize. 
-        // For now, we allow the caller (who should be guarded by controller)
+        let document = task.document;
+        if (files && files.length > 0) {
+            const fs = await import('fs');
+            const path = await import('path');
+            const uploadDir = path.join(process.cwd(), 'uploads');
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+            const savedPaths: string[] = [];
+            for (const file of files) {
+                const fileName = `${task.taskNo}_${Date.now()}_${file.originalname}`;
+                const uploadPath = path.join(uploadDir, fileName);
+                fs.writeFileSync(uploadPath, file.buffer);
+                savedPaths.push(`/uploads/${fileName}`);
+            }
+            const existingDocs = task.document ? task.document.split(',') : [];
+            document = [...existingDocs, ...savedPaths].join(',');
+        }
 
         const completedTask = await this.prisma.$transaction(async (tx) => {
             // 1. Create in CompletedTask
@@ -355,7 +389,7 @@ export class TaskService {
                     taskStatus: TaskStatus.Completed,
                     additionalNote: task.additionalNote,
                     deadline: task.deadline,
-                    document: task.document,
+                    document: document,
                     remarkChat: remark || task.remarkChat,
                     createdTime: task.createdTime,
                     completeTime: new Date(),

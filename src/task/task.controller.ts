@@ -94,22 +94,26 @@ export class TaskController {
 
     @Patch(':id/submit-review')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
+    @UseInterceptors(FilesInterceptor('attachments'))
     submitReview(
         @Param('id') id: string,
         @Body('remark') remark: string,
         @GetUser('id') userId: string,
+        @UploadedFiles() files?: Express.Multer.File[],
     ) {
-        return this.taskService.submitForReview(id, remark, userId);
+        return this.taskService.submitForReview(id, remark, userId, files);
     }
 
     @Patch(':id/finalize-complete')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
+    @UseInterceptors(FilesInterceptor('attachments'))
     finalizeComplete(
         @Param('id') id: string,
         @Body('remark') remark: string,
         @GetUser('id') userId: string,
+        @UploadedFiles() files?: Express.Multer.File[],
     ) {
-        return this.taskService.finalizeCompletion(id, remark, userId);
+        return this.taskService.finalizeCompletion(id, remark, userId, files);
     }
 
     @Patch(':id/reminder')
