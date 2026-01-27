@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, IsBoolean, IsEmail, MinLength } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsArray, IsUUID, IsBoolean, IsEmail, MinLength, Length } from 'class-validator';
 import { TeamStatus, LoginMethod, UserRole } from '@prisma/client';
 
 export class CreateTeamDto {
@@ -16,6 +16,7 @@ export class CreateTeamDto {
 
     @IsString()
     @IsNotEmpty()
+    @Length(10, 10, { message: 'Phone number must be exactly 10 characters' })
     phone: string;
 
     @IsString()
@@ -88,6 +89,7 @@ export class UpdateTeamDto {
 
     @IsString()
     @IsOptional()
+    @Length(10, 10, { message: 'Phone number must be exactly 10 characters' })
     phone?: string;
 
     @IsString()

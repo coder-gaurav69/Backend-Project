@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, IsOptional, IsEnum } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional, IsEnum, Length } from 'class-validator';
 
 export enum OtpChannel {
     EMAIL = 'EMAIL'
@@ -20,6 +20,7 @@ export class RegisterDto {
 
     @IsString()
     @IsOptional()
+    @Length(10, 10, { message: 'Phone number must be exactly 10 characters' })
     phoneNumber?: string;
 
     @IsEnum(OtpChannel)
@@ -110,6 +111,7 @@ export class UpdateProfileDto {
 
     @IsString()
     @IsOptional()
+    @Length(10, 10, { message: 'Phone number must be exactly 10 characters' })
     phone?: string;
 
     @IsString()
