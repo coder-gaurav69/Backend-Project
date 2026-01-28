@@ -36,15 +36,17 @@ export class TaskService {
 
         let document = dto.document;
         if (files && files.length > 0) {
-            const file = files[0];
-            // Rule: <TaskNumber>_<OriginalFileName>
-            const fileName = `${taskNo}_${file.originalname}`;
+            const savedPaths: string[] = [];
             const uploadDir = path.join(process.cwd(), 'uploads');
             if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-            const uploadPath = path.join(uploadDir, fileName);
-            fs.writeFileSync(uploadPath, file.buffer);
-            document = `/uploads/${fileName}`;
+            for (const file of files) {
+                const fileName = `${taskNo}_${Date.now()}_${file.originalname}`;
+                const uploadPath = path.join(uploadDir, fileName);
+                fs.writeFileSync(uploadPath, file.buffer);
+                savedPaths.push(`/uploads/${fileName}`);
+            }
+            document = savedPaths.join(',');
         }
 
         const task = await this.prisma.pendingTask.create({
@@ -244,17 +246,23 @@ export class TaskService {
         const path = await import('path');
 
         // Handle File Update
-        let document = dto.document; // Default to existing/incoming string
+        let document = dto.document; // This contains the existing comma-separated string from frontend
         if (files && files.length > 0) {
-            const file = files[0];
-            const taskNo = (existingTask as any).taskNo;
-            const fileName = `${taskNo}_${file.originalname}`;
+            const savedPaths: string[] = [];
             const uploadDir = path.join(process.cwd(), 'uploads');
             if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-            const uploadPath = path.join(uploadDir, fileName);
-            fs.writeFileSync(uploadPath, file.buffer);
-            document = `/uploads/${fileName}`;
+            const taskNo = (existingTask as any).taskNo;
+            for (const file of files) {
+                const fileName = `${taskNo}_${Date.now()}_${file.originalname}`;
+                const uploadPath = path.join(uploadDir, fileName);
+                fs.writeFileSync(uploadPath, file.buffer);
+                savedPaths.push(`/uploads/${fileName}`);
+            }
+
+            // Merge existing paths from dto.document with new ones
+            const existingPaths = dto.document ? dto.document.split(',').filter(Boolean) : [];
+            document = [...existingPaths, ...savedPaths].join(',');
         }
 
         const currentEditTime = (existingTask as any).editTime || [];
