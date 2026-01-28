@@ -127,6 +127,18 @@ export class TaskController {
         return this.taskService.sendReminder(id, userId);
     }
 
+    @Patch(':id/reject')
+    @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
+    @UseInterceptors(FilesInterceptor('attachments'))
+    rejectTask(
+        @Param('id') id: string,
+        @Body('remark') remark: string,
+        @GetUser('id') userId: string,
+        @UploadedFiles() files?: Express.Multer.File[],
+    ) {
+        return this.taskService.rejectTask(id, remark, userId, files);
+    }
+
     @Delete(':id')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
     delete(

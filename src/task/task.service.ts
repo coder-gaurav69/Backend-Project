@@ -494,6 +494,64 @@ export class TaskService {
         return { message: 'Reminder sent successfully' };
     }
 
+    async rejectTask(id: string, remark: string, userId: string, files?: Express.Multer.File[]) {
+        const task = await this.prisma.pendingTask.findUnique({
+            where: { id },
+            include: { project: true, assignee: true, creator: true, targetGroup: true, targetTeam: true, worker: true }
+        });
+
+        if (!task) throw new NotFoundException('Task not found');
+        if (task.taskStatus !== TaskStatus.ReviewPending) throw new BadRequestException('Only tasks in review can be rejected');
+
+        // Check permission: Only creator can reject
+        if (task.createdBy !== userId) {
+            throw new ForbiddenException('Only the task creator can reject a task.');
+        }
+
+        let document = task.document;
+        if (files && files.length > 0) {
+            const fs = await import('fs');
+            const path = await import('path');
+            const uploadDir = path.join(process.cwd(), 'uploads');
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+            const savedPaths: string[] = [];
+            for (const file of files) {
+                const fileName = `${task.taskNo}_${Date.now()}_${file.originalname}`;
+                const uploadPath = path.join(uploadDir, fileName);
+                fs.writeFileSync(uploadPath, file.buffer);
+                savedPaths.push(`/uploads/${fileName}`);
+            }
+            const existingDocs = task.document ? task.document.split(',') : [];
+            document = [...existingDocs, ...savedPaths].join(',');
+        }
+
+        const updated = await this.prisma.pendingTask.update({
+            where: { id },
+            data: {
+                taskStatus: TaskStatus.Pending,
+                remarkChat: remark,
+                reviewedTime: { push: new Date() },
+                document: document
+            },
+            include: { creator: true, project: true, assignee: true, worker: true }
+        });
+
+        // Notify Worker/Assignee about rejection
+        const workerId = task.workingBy || task.assignedTo || task.targetTeamId;
+        if (workerId && workerId !== userId) {
+            await this.notificationService.createNotification(workerId, {
+                title: 'Task Rejected',
+                description: `Your work on task "${task.taskTitle}" has been rejected. Reason: ${remark}`,
+                type: 'TASK',
+                metadata: { taskId: updated.id, taskNo: task.taskNo, status: 'Pending' },
+            });
+        }
+
+        await this.invalidateCache();
+        return this.sortTaskDates(updated);
+    }
+
     async delete(id: string, userId: string, role: string) {
         // User requested to remove delete logic completely for tasks
         throw new ForbiddenException('Task deletion is disabled.');
