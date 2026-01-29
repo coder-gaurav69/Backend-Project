@@ -59,7 +59,6 @@ model ClientGroup {
   companies   ClientCompany[]
   creator     Team?             @relation("CreatedByTeam", fields: [createdBy], references: [id])
   updater     Team?             @relation("UpdatedByTeam", fields: [updatedBy], references: [id])
-  groups        Group[]
   ipAddresses   IpAddress[]
   locations     ClientLocation[]
   projects      Project[]
@@ -159,7 +158,6 @@ model ClientCompany {
   group        ClientGroup      @relation(fields: [groupId], references: [id])
   updater      Team?            @relation("CompanyUpdatedByTeam", fields: [updatedBy], references: [id])
   locations    ClientLocation[]
-  groups       Group[]
   ipAddresses  IpAddress[]
   subLocations SubLocation[]
   projects     Project[]
@@ -193,7 +191,6 @@ model ClientLocation {
   company       ClientCompany? @relation(fields: [companyId], references: [id])
   creator       Team?          @relation("LocationCreatedByTeam", fields: [createdBy], references: [id])
   updater       Team?          @relation("LocationUpdatedByTeam", fields: [updatedBy], references: [id])
-  groups        Group[]
   ipAddresses   IpAddress[]
   subLocations  SubLocation[]
   projects      Project[]
@@ -225,7 +222,6 @@ model SubLocation {
   updatedAt       DateTime          @updatedAt @map("updated_at")
   createdBy       String?           @map("created_by") @db.Uuid
   updatedBy       String?           @map("updated_by") @db.Uuid
-  groups          Group[]
   ipAddresses     IpAddress[]
   projects        Project[]
   clientGroup     ClientGroup       @relation(fields: [clientGroupId], references: [id])
@@ -351,6 +347,7 @@ model Team {
   stickyNotes            StickyNote[]
   createdSubLocations    SubLocation[]      @relation("SubLocationCreatedByTeam")
   updatedSubLocations    SubLocation[]      @relation("SubLocationUpdatedByTeam")
+  taskAcceptances        TaskAcceptance[]
   clientGroup            ClientGroup?       @relation(fields: [clientGroupId], references: [id], onDelete: Restrict)
   company                ClientCompany?     @relation(fields: [companyId], references: [id], onDelete: Restrict)
   creator                Team?              @relation("TeamCreatedByTeam", fields: [createdBy], references: [id])
@@ -377,11 +374,10 @@ model Group {
   id             String          @id @default(uuid()) @db.Uuid
   groupNo        String          @unique @map("group_no")
   groupName      String          @map("group_name")
-  groupCode      String          @unique @map("group_code")
-  clientGroupId  String?         @map("client_group_id") @db.Uuid
-  companyId      String?         @map("company_id") @db.Uuid
-  locationId     String?         @map("location_id") @db.Uuid
-  subLocationId  String?         @map("sub_location_id") @db.Uuid
+  clientGroupIds String[]        @default([]) @map("client_group_ids")
+  companyIds     String[]        @default([]) @map("company_ids")
+  locationIds    String[]        @default([]) @map("location_ids")
+  subLocationIds String[]        @default([]) @map("sub_location_ids")
   status         GroupStatus     @default(Active)
   remark         String?
   createdAt      DateTime        @default(now()) @map("created_at")
@@ -390,26 +386,43 @@ model Group {
   updatedBy      String?         @map("updated_by") @db.Uuid
   completedTasks CompletedTask[] @relation("CompletedTaskToGroup")
   members        GroupMember[]
-  clientGroup    ClientGroup?    @relation(fields: [clientGroupId], references: [id], onDelete: Restrict)
-  company        ClientCompany?  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   creator        Team?           @relation("GroupCreatedByTeam", fields: [createdBy], references: [id])
-  location       ClientLocation? @relation(fields: [locationId], references: [id], onDelete: Restrict)
-  subLocation    SubLocation?    @relation(fields: [subLocationId], references: [id], onDelete: Restrict)
   updater        Team?           @relation("GroupUpdatedByTeam", fields: [updatedBy], references: [id])
   pendingTasks   PendingTask[]   @relation("PendingTaskToGroup")
+  taskAcceptances TaskAcceptance[]
 
   @@index([groupNo])
-  @@index([groupCode])
-  @@index([clientGroupId])
-  @@index([companyId])
-  @@index([locationId])
-  @@index([subLocationId])
   @@index([status])
   @@index([createdAt])
-  @@index([clientGroupId, companyId, status])
-  @@index([companyId, locationId, status])
-  @@index([status, createdAt])
   @@map("groups")
+}
+
+model TaskAcceptance {
+  id        String           @id @default(uuid()) @db.Uuid
+  taskId    String           @map("task_id") @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  groupId   String           @map("group_id") @db.Uuid
+  status    AcceptanceStatus @default(PENDING)
+  actionAt  DateTime?        @map("action_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  pendingTask PendingTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        Team        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group       Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId])
+  @@index([taskId])
+  @@index([userId])
+  @@index([groupId])
+  @@index([status])
+  @@map("task_acceptances")
+}
+
+enum AcceptanceStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
 }
 
 model GroupMember {
@@ -489,7 +502,8 @@ model PendingTask {
   project        Project?   @relation(fields: [projectId], references: [id])
   targetGroup    Group?     @relation("PendingTaskToGroup", fields: [targetGroupId], references: [id])
   targetTeam     Team?      @relation("PendingTaskToTeam", fields: [targetTeamId], references: [id])
-  worker         Team?      @relation("PendingTaskWorkingByTeam", fields: [workingBy], references: [id])
+  worker         Team?            @relation("PendingTaskWorkingByTeam", fields: [workingBy], references: [id])
+  taskAcceptances TaskAcceptance[]
 
   @@index([taskNo])
   @@index([taskStatus])

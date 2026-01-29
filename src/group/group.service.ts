@@ -38,53 +38,26 @@ export class GroupService {
     ) { }
 
     async create(dto: CreateGroupDto, userId: string) {
-        // Check for duplicate group code
-        const existing = await this.prisma.group.findUnique({
-            where: { groupCode: dto.groupCode },
-        });
-
-        if (existing) {
-            throw new ConflictException('Group code already exists');
-        }
-
-        // Validate optional relationships
-        if (dto.clientGroupId) {
-            const clientGroup = await this.prisma.clientGroup.findFirst({
-                where: { id: dto.clientGroupId },
-            });
-            if (!clientGroup) throw new NotFoundException('Client group not found');
-        }
-
-        if (dto.companyId) {
-            const company = await this.prisma.clientCompany.findFirst({
-                where: { id: dto.companyId },
-            });
-            if (!company) throw new NotFoundException('Client company not found');
-        }
-
-        if (dto.locationId) {
-            const location = await this.prisma.clientLocation.findFirst({
-                where: { id: dto.locationId },
-            });
-            if (!location) throw new NotFoundException('Client location not found');
-        }
-
-        if (dto.subLocationId) {
-            const subLocation = await this.prisma.subLocation.findFirst({
-                where: { id: dto.subLocationId },
-            });
-            if (!subLocation) throw new NotFoundException('Sub location not found');
-        }
+        const { teamMemberIds, ...groupData } = dto;
 
         const generatedGroupNo = await this.autoNumberService.generateGroupNo();
 
         const group = await this.prisma.group.create({
             data: {
-                ...dto,
+                ...groupData as any,
                 groupNo: dto.groupNo || generatedGroupNo,
                 status: dto.status || GroupStatus.Active,
                 createdBy: userId,
+                members: teamMemberIds && teamMemberIds.length > 0 ? {
+                    create: teamMemberIds.map(id => ({
+                        userId: id,
+                        role: 'MEMBER'
+                    }))
+                } : undefined
             },
+            include: {
+                members: true
+            }
         });
 
         await this.invalidateCache();
@@ -111,20 +84,19 @@ export class GroupService {
         const andArray = where.AND as Array<Prisma.GroupWhereInput>;
 
         // Handle Status Filter
-        if (filter?.status) {
-            const statusValues = typeof filter.status === 'string'
-                ? filter.status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
-                : Array.isArray(filter.status) ? filter.status : [filter.status];
+        if (filter?.status as any) {
+            const statusValues = typeof (filter as any).status === 'string'
+                ? (filter as any).status.split(/[,\:;|]/).map(v => v.trim()).filter(Boolean)
+                : Array.isArray((filter as any).status) ? (filter as any).status : [(filter as any).status];
             if (statusValues.length > 0) andArray.push({ status: { in: statusValues as any } });
         }
 
-        if (filter?.clientGroupId) andArray.push({ clientGroupId: filter.clientGroupId });
-        if (filter?.companyId) andArray.push({ companyId: filter.companyId });
-        if (filter?.locationId) andArray.push({ locationId: filter.locationId });
-        if (filter?.subLocationId) andArray.push({ subLocationId: filter.subLocationId });
+        if (filter?.clientGroupIds && filter.clientGroupIds.length > 0) andArray.push({ clientGroupIds: { hasSome: filter.clientGroupIds } });
+        if (filter?.companyIds && filter.companyIds.length > 0) andArray.push({ companyIds: { hasSome: filter.companyIds } });
+        if (filter?.locationIds && filter.locationIds.length > 0) andArray.push({ locationIds: { hasSome: filter.locationIds } });
+        if (filter?.subLocationIds && filter.subLocationIds.length > 0) andArray.push({ subLocationIds: { hasSome: filter.subLocationIds } });
         if (filter?.groupName) andArray.push(buildMultiValueFilter('groupName', filter.groupName));
         if (filter?.groupNo) andArray.push(buildMultiValueFilter('groupNo', filter.groupNo));
-        if (filter?.groupCode) andArray.push(buildMultiValueFilter('groupCode', filter.groupCode));
         if (filter?.remark) andArray.push(buildMultiValueFilter('remark', filter.remark));
 
         if (cleanedSearch) {
@@ -136,16 +108,14 @@ export class GroupService {
                 const looksLikeCode = /^[A-Z]{2,}-\d+$/i.test(val) || /^[A-Z0-9-]+$/i.test(val);
 
                 if (looksLikeCode) {
-                    allSearchConditions.push({ groupCode: { equals: val, mode: 'insensitive' } });
-                    allSearchConditions.push({ groupCode: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupNo: { equals: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupNo: { contains: val, mode: 'insensitive' } });
                 } else {
                     allSearchConditions.push({ groupName: { contains: val, mode: 'insensitive' } });
-                    allSearchConditions.push({ groupCode: { contains: val, mode: 'insensitive' } });
+                    allSearchConditions.push({ groupNo: { contains: val, mode: 'insensitive' } });
                 }
 
                 allSearchConditions.push({ remark: { contains: val, mode: 'insensitive' } });
-                allSearchConditions.push({ company: { companyName: { contains: val, mode: 'insensitive' } } });
-                allSearchConditions.push({ location: { locationName: { contains: val, mode: 'insensitive' } } });
 
                 if ('active'.includes(searchLower) && searchLower.length >= 3) {
                     allSearchConditions.push({ status: 'Active' as any });
@@ -169,38 +139,49 @@ export class GroupService {
                 take: Number(limit),
                 orderBy: { [sortBy]: sortOrder },
                 include: {
-                    clientGroup: {
-                        select: { id: true, groupName: true, groupCode: true },
-                    },
-                    company: {
-                        select: { id: true, companyName: true, companyCode: true },
-                    },
-                    location: {
-                        select: { id: true, locationName: true, locationCode: true },
-                    },
-                    subLocation: {
-                        select: { id: true, subLocationName: true, subLocationCode: true },
-                    },
+                    members: {
+                        include: {
+                            team: {
+                                select: { id: true, firstName: true, lastName: true, teamName: true }
+                            }
+                        }
+                    }
                 },
             }),
             this.prisma.group.count({ where }),
         ]);
 
+        // Resolve Hierarchical Names
+        const allClientGroupIds = Array.from(new Set(data.flatMap(g => g.clientGroupIds || [])));
+        const allCompanyIds = Array.from(new Set(data.flatMap(g => g.companyIds || [])));
+        const allLocationIds = Array.from(new Set(data.flatMap(g => g.locationIds || [])));
+        const allSubLocationIds = Array.from(new Set(data.flatMap(g => g.subLocationIds || [])));
+
+        const [clientGroups, companies, locations, subLocations] = await Promise.all([
+            this.prisma.clientGroup.findMany({ where: { id: { in: allClientGroupIds } }, select: { id: true, groupName: true } }),
+            this.prisma.clientCompany.findMany({ where: { id: { in: allCompanyIds } }, select: { id: true, companyName: true } }),
+            this.prisma.clientLocation.findMany({ where: { id: { in: allLocationIds } }, select: { id: true, locationName: true } }),
+            this.prisma.subLocation.findMany({ where: { id: { in: allSubLocationIds } }, select: { id: true, subLocationName: true } }),
+        ]);
+
+        const clientGroupMap = new Map(clientGroups.map(x => [x.id, x.groupName]));
+        const companyMap = new Map(companies.map(x => [x.id, x.companyName]));
+        const locationMap = new Map(locations.map(x => [x.id, x.locationName]));
+        const subLocationMap = new Map(subLocations.map(x => [x.id, x.subLocationName]));
+
         const mappedData = data.map((item) => ({
             ...item,
-            clientCompany: item.company,
-            clientLocation: item.location,
-            clientGroupName: item.clientGroup?.groupName,
-            companyName: item.company?.companyName,
-            locationName: item.location?.locationName,
-            subLocationName: item.subLocation?.subLocationName,
+            clientGroupName: (item.clientGroupIds || []).map(id => clientGroupMap.get(id)).filter(Boolean).join(', '),
+            companyName: (item.companyIds || []).map(id => companyMap.get(id)).filter(Boolean).join(', '),
+            locationName: (item.locationIds || []).map(id => locationMap.get(id)).filter(Boolean).join(', '),
+            subLocationName: (item.subLocationIds || []).map(id => subLocationMap.get(id)).filter(Boolean).join(', '),
         }));
 
         return new PaginatedResponse(mappedData, total, page, limit);
     }
 
     async findActive(pagination: PaginationDto) {
-        const filter: FilterGroupDto = { status: GroupStatus.Active };
+        const filter: any = { status: GroupStatus.Active };
         return this.findAll(pagination, filter);
     }
 
@@ -219,7 +200,6 @@ export class GroupService {
                         id: true,
                         groupNo: true,
                         groupName: true,
-                        groupCode: true,
                         status: true,
                     }
                 }
@@ -234,10 +214,13 @@ export class GroupService {
         const group = await this.prisma.group.findFirst({
             where: { id },
             include: {
-                clientGroup: true,
-                company: true,
-                location: true,
-                subLocation: true,
+                members: {
+                    include: {
+                        team: {
+                            select: { id: true, firstName: true, lastName: true, email: true }
+                        }
+                    }
+                },
                 creator: {
                     select: { id: true, firstName: true, lastName: true, email: true },
                 },
@@ -256,53 +239,32 @@ export class GroupService {
 
     async update(id: string, dto: UpdateGroupDto, userId: string) {
         const existing = await this.findById(id);
+        const { teamMemberIds, ...groupData } = dto;
 
-        // Check for duplicate group code if being updated
-        if (dto.groupCode && dto.groupCode !== existing.groupCode) {
-            const duplicate = await this.prisma.group.findUnique({
-                where: { groupCode: dto.groupCode },
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const grp = await tx.group.update({
+                where: { id },
+                data: {
+                    ...groupData as any,
+                    updatedBy: userId,
+                },
             });
 
-            if (duplicate) {
-                throw new ConflictException('Group code already exists');
+            if (teamMemberIds !== undefined) {
+                // Sync members
+                await tx.groupMember.deleteMany({ where: { groupId: id } });
+                if (teamMemberIds.length > 0) {
+                    await tx.groupMember.createMany({
+                        data: teamMemberIds.map(uid => ({
+                            groupId: id,
+                            userId: uid,
+                            role: 'MEMBER'
+                        }))
+                    });
+                }
             }
-        }
 
-        // Validate optional relationships if being updated
-        if (dto.clientGroupId) {
-            const clientGroup = await this.prisma.clientGroup.findFirst({
-                where: { id: dto.clientGroupId },
-            });
-            if (!clientGroup) throw new NotFoundException('Client group not found');
-        }
-
-        if (dto.companyId) {
-            const company = await this.prisma.clientCompany.findFirst({
-                where: { id: dto.companyId },
-            });
-            if (!company) throw new NotFoundException('Client company not found');
-        }
-
-        if (dto.locationId) {
-            const location = await this.prisma.clientLocation.findFirst({
-                where: { id: dto.locationId },
-            });
-            if (!location) throw new NotFoundException('Client location not found');
-        }
-
-        if (dto.subLocationId) {
-            const subLocation = await this.prisma.subLocation.findFirst({
-                where: { id: dto.subLocationId },
-            });
-            if (!subLocation) throw new NotFoundException('Sub location not found');
-        }
-
-        const updated = await this.prisma.group.update({
-            where: { id },
-            data: {
-                ...dto,
-                updatedBy: userId,
-            },
+            return grp;
         });
 
         await this.invalidateCache();
@@ -374,9 +336,8 @@ export class GroupService {
         const errors: any[] = [];
 
         const allExisting = await this.prisma.group.findMany({
-            select: { groupCode: true, groupNo: true },
+            select: { groupNo: true },
         });
-        const existingCodes = new Set(allExisting.map((x) => x.groupCode));
         const existingNos = new Set(allExisting.map((x) => x.groupNo));
 
         const prefix = 'G-';
@@ -387,20 +348,9 @@ export class GroupService {
         const dataToInsert: any[] = [];
 
         for (const groupDto of dto.groups) {
+            let groupName = 'Unnamed Group';
             try {
-                const groupName = groupDto.groupName?.trim() || groupDto.groupCode || 'Unnamed Group';
-
-                // Unique code logic
-                let finalGroupCode = groupDto.groupCode?.trim() || `GRP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                if (existingCodes.has(finalGroupCode)) {
-                    let suffix = 1;
-                    const originalCode = finalGroupCode;
-                    while (existingCodes.has(`${originalCode}-${suffix}`)) {
-                        suffix++;
-                    }
-                    finalGroupCode = `${originalCode}-${suffix}`;
-                }
-                existingCodes.add(finalGroupCode);
+                groupName = groupDto.groupName?.trim() || 'Unnamed Group';
 
                 // Unique number logic
                 let finalGroupNo = groupDto.groupNo?.trim();
@@ -417,13 +367,12 @@ export class GroupService {
                 dataToInsert.push({
                     ...groupDto,
                     groupName,
-                    groupCode: finalGroupCode,
                     groupNo: finalGroupNo,
                     status: groupDto.status || GroupStatus.Active,
                     createdBy: userId,
                 });
             } catch (err) {
-                errors.push({ groupCode: groupDto.groupCode, error: err.message });
+                errors.push({ groupName, error: err.message });
             }
         }
 
@@ -537,7 +486,7 @@ export class GroupService {
             remark: ['remark', 'remarks', 'notes', 'description', 'comment'],
         };
 
-        const requiredColumns = ['groupName', 'groupCode'];
+        const requiredColumns = ['groupName'];
 
         const { data, errors: parseErrors } = await this.excelUploadService.parseFile<CreateGroupDto>(
             file,
@@ -585,11 +534,10 @@ export class GroupService {
                 processedData.push({
                     groupNo: (row as any).groupNo,
                     groupName: (row as any).groupName,
-                    groupCode: (row as any).groupCode,
-                    clientGroupId: clientGroupId,
-                    companyId: companyId,
-                    locationId: locationId,
-                    subLocationId: subLocationId,
+                    clientGroupIds: clientGroupId ? [clientGroupId] : [],
+                    companyIds: companyId ? [companyId] : [],
+                    locationIds: locationId ? [locationId] : [],
+                    subLocationIds: subLocationId ? [subLocationId] : [],
                     status: status as GroupStatus,
                     remark: (row as any).remark,
                 });

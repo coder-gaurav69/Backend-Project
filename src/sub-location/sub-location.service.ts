@@ -215,7 +215,7 @@ export class SubLocationService {
                         },
                     },
                     _count: {
-                        select: { projects: true, teams: true, groups: true }
+                        select: { projects: true, teams: true }
                     }
                 },
             }),
@@ -340,7 +340,6 @@ export class SubLocationService {
                     select: {
                         projects: true,
                         teams: true,
-                        groups: true,
                         ipAddresses: true,
                     }
                 }
@@ -355,7 +354,6 @@ export class SubLocationService {
         const childCounts = [
             _count.projects > 0 && `${_count.projects} projects`,
             _count.teams > 0 && `${_count.teams} teams`,
-            _count.groups > 0 && `${_count.groups} groups`,
             _count.ipAddresses > 0 && `${_count.ipAddresses} IP addresses`,
         ].filter(Boolean);
 

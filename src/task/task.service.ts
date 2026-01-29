@@ -2,10 +2,10 @@ import { Injectable, NotFoundException, ForbiddenException, Logger, BadRequestEx
 import { PrismaService } from '../prisma/prisma.service';
 import { AutoNumberService } from '../common/services/auto-number.service';
 import { RedisService } from '../redis/redis.service';
-import { CreateTaskDto, UpdateTaskDto, FilterTaskDto, TaskViewMode } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskDto, FilterTaskDto, TaskViewMode, UpdateTaskAcceptanceDto } from './dto/task.dto';
 import { NotificationService } from '../notification/notification.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
-import { Prisma, TaskStatus } from '@prisma/client';
+import { Prisma, TaskStatus, AcceptanceStatus } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 const csvParser = require('csv-parser');
 import * as fs from 'fs';
@@ -52,15 +52,14 @@ export class TaskService {
         const task = await this.prisma.pendingTask.create({
             data: {
                 ...dto,
-                taskStatus: TaskStatus.Pending, // Automated Status Derivation
+                taskStatus: TaskStatus.Pending,
                 taskTitle: toTitleCase(dto.taskTitle),
                 additionalNote: dto.additionalNote ? toTitleCase(dto.additionalNote) : undefined,
                 taskNo,
                 createdBy: userId,
                 document,
                 reminderTime: dto.reminderTime ? [...new Set(dto.reminderTime)].sort().map(d => new Date(d)) : [],
-                editTime: [new Date()], // Initialize edit history
-                // Sanitize UUIDs to handle strings from FormData
+                editTime: [new Date()],
                 assignedTo: dto.assignedTo && dto.assignedTo !== 'null' ? dto.assignedTo : null,
                 targetGroupId: dto.targetGroupId && dto.targetGroupId !== 'null' ? dto.targetGroupId : null,
                 targetTeamId: dto.targetTeamId && dto.targetTeamId !== 'null' ? dto.targetTeamId : null,
@@ -69,31 +68,58 @@ export class TaskService {
                 project: true,
                 assignee: true,
                 creator: true,
-                targetGroup: true,
+                targetGroup: {
+                    include: {
+                        members: true
+                    }
+                },
                 targetTeam: true,
             },
         });
 
-        // Send notifications to Assignee or Target Team
         const recipients = new Set<string>();
 
-        // If assigned to individual user
         if (task.assignedTo) {
             recipients.add(task.assignedTo);
         }
 
-        // If assigned to target team (which is actually a single user/team entity)
         if (task.targetTeamId) {
             recipients.add(task.targetTeamId);
         }
 
-        // Don't notify the creator
+        // Handle Group Assignment and Task Acceptance
+        if (task.targetGroupId) {
+            const members = await this.prisma.groupMember.findMany({
+                where: { groupId: task.targetGroupId }
+            });
+
+            console.log(`[TaskService] Found ${members.length} members for Group ${task.targetGroupId}`);
+
+            if (members.length > 0) {
+                const acceptanceData = members.map(m => ({
+                    taskId: task.id,
+                    userId: m.userId,
+                    groupId: task.targetGroupId,
+                    status: 'PENDING'
+                }));
+
+                await (this.prisma as any).taskAcceptance.createMany({
+                    data: acceptanceData,
+                    skipDuplicates: true
+                });
+                console.log(`[TaskService] Created ${acceptanceData.length} TaskAcceptance records`);
+
+                members.forEach(m => recipients.add(m.userId));
+            }
+        }
+
         recipients.delete(userId);
+        console.log(`[TaskService] Notifying recipients for Task ${task.taskNo}:`, Array.from(recipients));
 
         for (const recipientId of recipients) {
             await this.notificationService.createNotification(recipientId, {
                 title: 'New Task Assigned',
-                description: `A new task "${task.taskTitle}" has been assigned to you.`,
+                description: `A new task "${task.taskTitle}" has been assigned to your group or you.`,
                 type: 'TASK',
                 metadata: { taskId: task.id, taskNo: task.taskNo },
             });
@@ -101,6 +127,87 @@ export class TaskService {
 
         await this.invalidateCache();
         return this.sortTaskDates(task);
+    }
+
+    async getPendingAcceptances(userId: string) {
+        console.log(`[TaskService] Fetching pending acceptances for userId: ${userId}`);
+        const acceptances = await (this.prisma as any).taskAcceptance.findMany({
+            where: {
+                userId,
+                status: 'PENDING'
+            },
+            include: {
+                pendingTask: {
+                    include: {
+                        project: { select: { projectName: true } },
+                        creator: { select: { firstName: true, lastName: true } }
+                    }
+                },
+                group: { select: { groupName: true } }
+            }
+        });
+        console.log(`[TaskService] Found ${acceptances.length} acceptances for userId: ${userId}`);
+        return acceptances;
+    }
+
+    async updateAcceptanceStatus(id: string, dto: UpdateTaskAcceptanceDto, userId: string) {
+        const { status } = dto;
+        const acceptance = await (this.prisma as any).taskAcceptance.findUnique({
+            where: { id }
+        });
+
+        if (!acceptance || acceptance.userId !== userId) {
+            throw new NotFoundException('Task acceptance record not found');
+        }
+
+        const updated = await (this.prisma as any).taskAcceptance.update({
+            where: { id },
+            data: {
+                status,
+                actionAt: new Date()
+            },
+            include: {
+                pendingTask: true
+            }
+        });
+
+        if (status === 'ACCEPTED') {
+            // RACE CONDITION CHECK: Verify if task is already assigned
+            if (acceptance.pendingTask.assignedTo) {
+                // If assigned to someone else, throw error
+                if (acceptance.pendingTask.assignedTo !== userId) {
+                    throw new BadRequestException('This task has already been accepted by another group member.');
+                }
+            } else {
+                // Assign the task to the user
+                await (this.prisma as any).pendingTask.update({
+                    where: { id: acceptance.taskId },
+                    data: {
+                        assignedTo: userId,
+                        taskStatus: TaskStatus.Pending // Ensure it stays pending but assigned
+                    }
+                });
+
+                // Optional: Auto-reject other pending acceptances for this task to clean up views
+                await (this.prisma as any).taskAcceptance.updateMany({
+                    where: {
+                        taskId: acceptance.taskId,
+                        id: { not: id }
+                    },
+                    data: { status: 'REJECTED' }
+                });
+            }
+
+            await this.notificationService.createNotification(updated.pendingTask.createdBy, {
+                title: 'Task Accepted',
+                description: `A member has accepted the task "${updated.pendingTask.taskTitle}".`,
+                type: 'TASK',
+                metadata: { taskId: updated.pendingTask.id, taskNo: updated.pendingTask.taskNo },
+            });
+        }
+
+        await this.invalidateCache();
+        return updated;
     }
 
     async findAll(pagination: PaginationDto, filter: FilterTaskDto, userId?: string, role?: string) {
@@ -113,18 +220,21 @@ export class TaskService {
         const model: any = isCompletedView ? this.prisma.completedTask : this.prisma.pendingTask;
 
         const where: any = {
-            AND: [
-                // Global Security Rule: User must be involved in the task
-                {
-                    OR: [
-                        { assignedTo: userId },
-                        { targetTeamId: userId },
-                        { createdBy: userId },
-                        { workingBy: userId },
-                    ]
-                }
-            ]
+            AND: []
         };
+
+        // Global Security Rule: User must be involved in the task (unless Admin)
+        const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
+        if (!isAdmin && userId) {
+            where.AND.push({
+                OR: [
+                    { assignedTo: userId },
+                    { targetTeamId: userId },
+                    { createdBy: userId },
+                    { workingBy: userId },
+                ]
+            });
+        }
         const andArray = where.AND;
 
         // Specific View Mode Filters
@@ -132,7 +242,16 @@ export class TaskService {
             switch (filter.viewMode) {
                 case TaskViewMode.MY_PENDING:
                     andArray.push({
-                        OR: [{ assignedTo: userId }, { targetTeamId: userId }],
+                        OR: [
+                            { assignedTo: userId },
+                            { targetTeamId: userId },
+                            {
+                                AND: [
+                                    { targetGroupId: { not: null } },
+                                    { taskAcceptances: { some: { userId: userId, status: 'ACCEPTED' } } }
+                                ]
+                            }
+                        ],
                         taskStatus: TaskStatus.Pending
                     });
                     break;
@@ -201,7 +320,7 @@ export class TaskService {
                     assignee: { select: { id: true, firstName: true, lastName: true, email: true, teamName: true } },
                     creator: { select: { id: true, firstName: true, lastName: true, email: true } },
                     targetTeam: { select: { id: true, teamName: true, email: true } },
-                    targetGroup: { select: { id: true, groupName: true, groupCode: true } }
+                    targetGroup: { select: { id: true, groupName: true } }
                 },
             }),
             model.count({ where }),
@@ -443,7 +562,7 @@ export class TaskService {
         return this.sortTaskDates(completedTask);
     }
 
-    private sortTaskDates(task: any) {
+    sortTaskDates(task: any) {
         if (!task) return task;
         const dateFields = ['reviewedTime', 'reminderTime', 'editTime'];
         dateFields.forEach(field => {
@@ -453,6 +572,7 @@ export class TaskService {
         });
         return task;
     }
+
 
     async sendReminder(id: string, userId: string) {
         const task = await this.findById(id);
@@ -466,6 +586,13 @@ export class TaskService {
         const recipients = new Set<string>();
         if ((task as any).assignedTo) recipients.add((task as any).assignedTo);
         if ((task as any).targetTeamId) recipients.add((task as any).targetTeamId);
+
+        if ((task as any).targetGroupId) {
+            const members = await this.prisma.groupMember.findMany({
+                where: { groupId: (task as any).targetGroupId }
+            });
+            members.forEach(m => recipients.add(m.userId));
+        }
 
         recipients.delete(userId);
 

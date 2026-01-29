@@ -22,7 +22,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
-import { UserRole } from '@prisma/client';
+import { UserRole, AcceptanceStatus } from '@prisma/client';
+import { UpdateTaskAcceptanceDto } from './dto/task-acceptance.dto';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -72,6 +73,20 @@ export class TaskController {
             'Content-Disposition': 'attachment; filename="tasks.xlsx"',
         });
         await this.taskService.downloadExcel(filter, userId, res);
+    }
+
+    @Get('acceptances/pending')
+    getPendingAcceptances(@GetUser('id') userId: string) {
+        return this.taskService.getPendingAcceptances(userId);
+    }
+
+    @Patch('acceptances/:id')
+    updateAcceptanceStatus(
+        @Param('id') id: string,
+        @Body() dto: UpdateTaskAcceptanceDto,
+        @GetUser('id') userId: string
+    ) {
+        return this.taskService.updateAcceptanceStatus(id, dto, userId);
     }
 
     @Get(':id')

@@ -173,7 +173,7 @@ export class ClientGroupService {
                     remark: true,
                     createdAt: true,
                     _count: {
-                        select: { companies: true, teams: true, groups: true }
+                        select: { companies: true, teams: true }
                     }
                 }
             }),
@@ -288,7 +288,6 @@ export class ClientGroupService {
                     select: {
                         companies: true,
                         teams: true,
-                        groups: true,
                         ipAddresses: true,
                     }
                 }
@@ -303,7 +302,6 @@ export class ClientGroupService {
         const childCounts = [
             _count.companies > 0 && `${_count.companies} companies`,
             _count.teams > 0 && `${_count.teams} teams`,
-            _count.groups > 0 && `${_count.groups} groups`,
             _count.ipAddresses > 0 && `${_count.ipAddresses} IP addresses`,
         ].filter(Boolean);
 

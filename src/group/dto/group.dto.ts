@@ -11,27 +11,32 @@ export class CreateGroupDto {
     @IsNotEmpty()
     groupName: string;
 
-    @IsString()
-    @IsNotEmpty()
-    @MaxLength(6)
-    @Transform(({ value }) => value?.toUpperCase())
-    groupCode: string;
 
-    @IsUUID()
-    @IsNotEmpty()
-    clientGroupId: string;
 
-    @IsUUID()
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    companyId?: string;
+    clientGroupIds?: string[];
 
-    @IsUUID()
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    locationId?: string;
+    companyIds?: string[];
 
-    @IsUUID()
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    subLocationId?: string;
+    locationIds?: string[];
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    subLocationIds?: string[];
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    teamMemberIds?: string[];
 
     @IsEnum(GroupStatus)
     @IsNotEmpty()
@@ -51,27 +56,32 @@ export class UpdateGroupDto {
     @IsOptional()
     groupName?: string;
 
-    @IsString()
-    @IsOptional()
-    @MaxLength(6)
-    @Transform(({ value }) => value?.toUpperCase())
-    groupCode?: string;
 
-    @IsUUID()
-    @IsOptional()
-    clientGroupId?: string;
 
-    @IsUUID()
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    companyId?: string;
+    clientGroupIds?: string[];
 
-    @IsUUID()
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    locationId?: string;
+    companyIds?: string[];
 
-    @IsUUID()
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    subLocationId?: string;
+    locationIds?: string[];
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    subLocationIds?: string[];
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    teamMemberIds?: string[];
 
     @IsEnum(GroupStatus)
     @IsOptional()
@@ -107,24 +117,24 @@ export class ChangeStatusDto {
 
 export class FilterGroupDto {
     @IsOptional()
-    @IsEnum(GroupStatus)
-    status?: GroupStatus;
+    @IsArray()
+    @IsString({ each: true })
+    clientGroupIds?: string[];
 
     @IsOptional()
-    @IsUUID()
-    clientGroupId?: string;
+    @IsArray()
+    @IsString({ each: true })
+    companyIds?: string[];
 
     @IsOptional()
-    @IsUUID()
-    companyId?: string;
+    @IsArray()
+    @IsString({ each: true })
+    locationIds?: string[];
 
     @IsOptional()
-    @IsUUID()
-    locationId?: string;
-
-    @IsOptional()
-    @IsUUID()
-    subLocationId?: string;
+    @IsArray()
+    @IsString({ each: true })
+    subLocationIds?: string[];
 
     @IsOptional()
     @IsString()
@@ -135,9 +145,8 @@ export class FilterGroupDto {
     groupNo?: string;
 
     @IsOptional()
-    @IsString()
-    @Transform(({ value }) => value?.toUpperCase())
-    groupCode?: string;
+    @IsEnum(GroupStatus)
+    status?: GroupStatus;
 
     @IsOptional()
     @IsString()

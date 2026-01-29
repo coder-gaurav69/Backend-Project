@@ -1,6 +1,6 @@
 import { IsString, IsOptional, IsEnum, IsUUID, IsDateString, IsNotEmpty, IsArray, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { TaskStatus } from '@prisma/client';
+import { TaskStatus, AcceptanceStatus } from '@prisma/client';
 
 export class CreateTaskDto {
     @IsString()
@@ -170,4 +170,9 @@ export enum TaskViewMode {
     TEAM_COMPLETED = 'TEAM_COMPLETED',
     REVIEW_PENDING_BY_ME = 'REVIEW_PENDING_BY_ME',
     REVIEW_PENDING_BY_TEAM = 'REVIEW_PENDING_BY_TEAM',
+}
+export class UpdateTaskAcceptanceDto {
+    @IsEnum(AcceptanceStatus)
+    @IsNotEmpty()
+    status: AcceptanceStatus;
 }

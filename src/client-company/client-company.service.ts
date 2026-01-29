@@ -194,11 +194,10 @@ export class ClientCompanyService {
                         select: {
                             id: true,
                             groupName: true,
-                            groupCode: true,
                         },
                     },
                     _count: {
-                        select: { locations: true, teams: true, groups: true }
+                        select: { locations: true, teams: true }
                     }
                 },
             }),
@@ -234,7 +233,6 @@ export class ClientCompanyService {
                     select: {
                         id: true,
                         groupName: true,
-                        groupCode: true,
                     },
                 },
                 creator: {
@@ -338,7 +336,6 @@ export class ClientCompanyService {
                         locations: true,
                         subLocations: true,
                         teams: true,
-                        groups: true,
                         ipAddresses: true,
                     }
                 }
@@ -354,7 +351,6 @@ export class ClientCompanyService {
             _count.locations > 0 && `${_count.locations} locations`,
             _count.subLocations > 0 && `${_count.subLocations} sub-locations`,
             _count.teams > 0 && `${_count.teams} teams`,
-            _count.groups > 0 && `${_count.groups} groups`,
             _count.ipAddresses > 0 && `${_count.ipAddresses} IP addresses`,
         ].filter(Boolean);
 
