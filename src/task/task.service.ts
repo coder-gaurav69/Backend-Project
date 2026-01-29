@@ -229,15 +229,19 @@ export class TaskService {
         const { toTitleCase } = await import('../common/utils/string-helper');
 
         // Identify which "database" (table) to query
-        const isCompletedView = filter.viewMode === TaskViewMode.MY_COMPLETED || filter.viewMode === TaskViewMode.TEAM_COMPLETED;
+        const isCompletedView = filter.viewMode === TaskViewMode.MY_COMPLETED ||
+            filter.viewMode === TaskViewMode.TEAM_COMPLETED ||
+            (Array.isArray(filter.taskStatus)
+                ? filter.taskStatus.includes(TaskStatus.Completed)
+                : filter.taskStatus === TaskStatus.Completed);
         const model: any = isCompletedView ? this.prisma.completedTask : this.prisma.pendingTask;
 
         const where: any = {
             AND: []
         };
 
-        // Global Security Rule: User must be involved in the task (unless Admin)
-        const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
+        // Global Security Rule: User must be involved in the task (unless Admin/HR/Manager)
+        const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN' || role === 'HR' || role === 'MANAGER';
         if (!isAdmin && userId) {
             where.AND.push({
                 OR: [
@@ -292,22 +296,39 @@ export class TaskService {
                     break;
                 case TaskViewMode.MY_COMPLETED:
                     andArray.push({
-                        OR: [{ assignedTo: userId }, { targetTeamId: userId }],
+                        OR: [
+                            { assignedTo: userId },
+                            { targetTeamId: userId },
+                            { workingBy: userId },
+                            { createdBy: userId }, // Also see tasks you created that are now complete
+                        ],
                         taskStatus: TaskStatus.Completed
                     });
                     break;
                 case TaskViewMode.TEAM_COMPLETED:
-                    andArray.push({
-                        createdBy: userId,
-                        taskStatus: TaskStatus.Completed,
-                        AND: [
-                            { OR: [{ assignedTo: { not: userId } }, { assignedTo: null }] },
-                            { OR: [{ targetTeamId: { not: userId } }, { targetTeamId: null }] }
-                        ]
-                    });
+                    if (isAdmin) {
+                        // Admins/HR/Managers see all completed tasks in Team Completed
+                        andArray.push({ taskStatus: TaskStatus.Completed });
+                    } else {
+                        // Others see tasks where they were Creator, Assignee, or Worker
+                        andArray.push({
+                            taskStatus: TaskStatus.Completed,
+                            OR: [
+                                { createdBy: userId },
+                                { assignedTo: userId },
+                                { workingBy: userId },
+                                { targetTeamId: userId }
+                            ]
+                        });
+                    }
                     break;
             }
         }
+
+        console.log(`[TaskService] ===== FIND ALL DEBUG =====`);
+        console.log(`[TaskService] User: ${userId}, Role: ${role}, ViewMode: ${filter.viewMode}`);
+        console.log(`[TaskService] Using Model: ${isCompletedView ? 'CompletedTask' : 'PendingTask'}`);
+        console.log(`[TaskService] Filter Conditions:`, JSON.stringify(where, null, 2));
 
         if (filter.search) {
             const val = filter.search;
@@ -322,22 +343,35 @@ export class TaskService {
             });
         }
 
+        console.log(`[TaskService] findAll query:`, {
+            viewMode: filter.viewMode,
+            model: isCompletedView ? 'CompletedTask' : 'PendingTask',
+            isAdmin,
+            userId,
+            where: JSON.stringify(where, null, 2)
+        });
+
+        console.log(`[TaskService] Executing query with skip: ${skip}, limit: ${limit}`);
+
         const [data, total] = await Promise.all([
             model.findMany({
                 where,
                 skip,
                 take: limit,
-                orderBy: { createdTime: 'desc' },
+                orderBy: isCompletedView ? { completedAt: 'desc' } : { createdTime: 'desc' },
                 include: {
                     project: { select: { id: true, projectName: true, projectNo: true } },
                     assignee: { select: { id: true, firstName: true, lastName: true, email: true, teamName: true } },
                     creator: { select: { id: true, firstName: true, lastName: true, email: true } },
                     targetTeam: { select: { id: true, teamName: true, email: true } },
-                    targetGroup: { select: { id: true, groupName: true } }
+                    targetGroup: { select: { id: true, groupName: true } },
+                    worker: { select: { id: true, firstName: true, lastName: true, email: true } }
                 },
             }),
             model.count({ where }),
         ]);
+
+        console.log(`[TaskService] findAll result count: ${data.length} for ${isCompletedView ? 'Completed' : 'Pending'} view`);
 
         return {
             data: data.map(task => this.sortTaskDates(task)),
@@ -454,6 +488,12 @@ export class TaskService {
         });
 
         if (!task) throw new NotFoundException('Task not found');
+
+        // Idempotency check: If already ReviewPending, treat as success
+        if (task.taskStatus === TaskStatus.ReviewPending) {
+            return this.sortTaskDates(task);
+        }
+
         if (task.taskStatus !== TaskStatus.Pending) throw new BadRequestException('Only pending tasks can be submitted for review');
 
         let document = task.document;
@@ -527,52 +567,96 @@ export class TaskService {
             document = [...existingDocs, ...savedPaths].join(',');
         }
 
-        const completedTask = await this.prisma.$transaction(async (tx) => {
-            // 1. Create in CompletedTask
-            const completed = await tx.completedTask.create({
-                data: {
+        try {
+            console.log(`[TaskService] ===== FINALIZE COMPLETION START =====`);
+            console.log(`[TaskService] Task ID: ${id}, Task No: ${task.taskNo}, Current Status: ${task.taskStatus}`);
+            console.log(`[TaskService] Worker: ${task.workingBy}, Assignee: ${task.assignedTo}, Creator: ${task.createdBy}`);
+            console.log(`[TaskService] Accepting User: ${userId}`);
+
+            // Check if already completed (Prevents unique constraint failure on taskNo)
+            const alreadyCompleted = await this.prisma.completedTask.findUnique({
+                where: { taskNo: task.taskNo }
+            });
+
+            if (alreadyCompleted) {
+                console.log(`[TaskService] Task ${task.taskNo} already exists in CompletedTask. Deleting from PendingTask.`);
+                await this.prisma.pendingTask.delete({ where: { id: task.id } });
+                await this.invalidateCache();
+                return this.sortTaskDates(alreadyCompleted);
+            }
+
+            const completedTask = await this.prisma.$transaction(async (tx) => {
+                console.log(`[TaskService] Starting finalization transaction for Task ${task.taskNo}`);
+                const completedData: any = {
+                    id: task.id,
                     taskNo: task.taskNo,
                     taskTitle: task.taskTitle,
                     priority: task.priority,
                     taskStatus: TaskStatus.Completed,
                     additionalNote: task.additionalNote,
                     deadline: task.deadline,
+                    completeTime: new Date(),
+                    completedAt: new Date(),
+                    reviewedTime: [...(task.reviewedTime || []), new Date()],
+                    reminderTime: task.reminderTime || [],
                     document: document,
                     remarkChat: remark || task.remarkChat,
                     createdTime: task.createdTime,
-                    completeTime: new Date(),
-                    completedAt: new Date(),
-                    projectId: task.projectId,
-                    assignedTo: task.assignedTo,
-                    targetGroupId: task.targetGroupId,
-                    targetTeamId: task.targetTeamId,
-                    createdBy: task.createdBy,
-                    workingBy: task.workingBy,
-                    editTime: task.editTime,
-                    reviewedTime: [...task.reviewedTime, new Date()],
-                    reminderTime: task.reminderTime,
-                }
+                    editTime: task.editTime || [],
+                };
+
+                // Only add non-null foreign keys
+                if (task.projectId) completedData.projectId = task.projectId;
+                if (task.assignedTo) completedData.assignedTo = task.assignedTo;
+                if (task.targetGroupId) completedData.targetGroupId = task.targetGroupId;
+                if (task.targetTeamId) completedData.targetTeamId = task.targetTeamId;
+                if (task.createdBy) completedData.createdBy = task.createdBy;
+
+                // Set workingBy - prefer original worker, fallback to current user
+                completedData.workingBy = task.workingBy || userId;
+
+                console.log(`[TaskService] Creating CompletedTask with data:`, JSON.stringify(completedData, null, 2));
+
+                const completed = await tx.completedTask.create({
+                    data: completedData
+                });
+
+                console.log(`[TaskService] Created CompletedTask record for ${task.taskNo} with ID ${completed.id}`);
+
+                // 2. Delete from PendingTask
+                await tx.pendingTask.delete({
+                    where: { id: task.id }
+                });
+
+                console.log(`[TaskService] Deleted PendingTask record for ${task.taskNo}`);
+
+                return completed;
             });
 
-            // 2. Delete from PendingTask
-            await tx.pendingTask.delete({ where: { id: task.id } });
+            console.log(`[TaskService] Task finalization successful for ${task.taskNo}`);
 
-            return completed;
-        });
+            // Notify Worker/Assignee
+            const workerId = task.workingBy || task.assignedTo || task.targetTeamId;
+            if (workerId && workerId !== userId) {
+                console.log(`[TaskService] Sending finalization notification to user: ${workerId}`);
+                await this.notificationService.createNotification(workerId, {
+                    title: 'Task Completed & Approved',
+                    description: `Your work on task "${task.taskTitle}" has been approved and marked as completed.`,
+                    type: 'TASK',
+                    metadata: { taskId: completedTask.id, taskNo: task.taskNo, status: 'Completed' },
+                });
+            }
 
-        // Notify Worker/Assignee
-        const workerId = task.workingBy || task.assignedTo || task.targetTeamId;
-        if (workerId && workerId !== userId) {
-            await this.notificationService.createNotification(workerId, {
-                title: 'Task Completed & Approved',
-                description: `Your work on task "${task.taskTitle}" has been approved and marked as completed.`,
-                type: 'TASK',
-                metadata: { taskId: completedTask.id, taskNo: task.taskNo, status: 'Completed' },
-            });
+            await this.invalidateCache();
+            return this.sortTaskDates(completedTask);
+        } catch (error: any) {
+            console.error('[TaskService] CRITICAL Error in finalizeCompletion:');
+            console.error('Message:', error.message);
+            console.error('Stack:', error.stack);
+            if (error.code) console.error('Prisma Error Code:', error.code);
+            if (error.meta) console.error('Prisma Meta:', error.meta);
+            throw error;
         }
-
-        await this.invalidateCache();
-        return this.sortTaskDates(completedTask);
     }
 
     sortTaskDates(task: any) {
@@ -580,9 +664,22 @@ export class TaskService {
         const dateFields = ['reviewedTime', 'reminderTime', 'editTime'];
         dateFields.forEach(field => {
             if (Array.isArray(task[field])) {
-                task[field] = task[field].sort((a: Date, b: Date) => a.getTime() - b.getTime());
+                task[field] = task[field]
+                    .map((d: any) => (d instanceof Date ? d : new Date(d)))
+                    .filter((d: Date) => !isNaN(d.getTime()))
+                    .sort((a: Date, b: Date) => a.getTime() - b.getTime());
             }
         });
+
+        // Single date fields
+        const singleDateFields = ['completeTime', 'createdTime', 'deadline', 'completedAt', 'updatedAt'];
+        singleDateFields.forEach(field => {
+            if (task[field] && !(task[field] instanceof Date)) {
+                const d = new Date(task[field]);
+                if (!isNaN(d.getTime())) task[field] = d;
+            }
+        });
+
         return task;
     }
 
@@ -733,9 +830,6 @@ export class TaskService {
         */
     }
 
-    private async invalidateCache() {
-        await this.redisService.deleteCachePattern(`${this.CACHE_KEY}:* `);
-    }
 
     /**
      * Bulk Upload Logic: Excel -> CSV -> Streaming Read -> Batch Insert
@@ -841,6 +935,7 @@ export class TaskService {
     }
 
     async downloadExcel(filter: FilterTaskDto, userId: string, res: any) {
+        // ... existing downloadExcel implementation ...
         const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
             stream: res,
             useStyles: true,
@@ -911,5 +1006,14 @@ export class TaskService {
         await processTable(this.prisma.completedTask);
 
         await workbook.commit();
+    }
+
+    private async invalidateCache() {
+        try {
+            await this.redisService.deleteCachePattern(this.CACHE_KEY + '*');
+            this.logger.log('Cache invalidated for tasks');
+        } catch (error) {
+            this.logger.error('Failed to invalidate cache', error);
+        }
     }
 }

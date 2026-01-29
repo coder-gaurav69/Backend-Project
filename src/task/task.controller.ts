@@ -33,12 +33,13 @@ export class TaskController {
     @Post()
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
     @UseInterceptors(FilesInterceptor('files'))
-    create(
+    async create(
         @UploadedFiles() files: Express.Multer.File[],
         @Body() dto: CreateTaskDto,
         @GetUser('id') userId: string
     ) {
-        return this.taskService.create(dto, userId, files);
+        const result = await this.taskService.create(dto, userId, files);
+        return { data: result };
     }
 
     @Get()
@@ -89,9 +90,9 @@ export class TaskController {
         return this.taskService.updateAcceptanceStatus(id, dto, userId);
     }
 
-    @Get(':id')
-    findById(@Param('id') id: string) {
-        return this.taskService.findById(id);
+    async findById(@Param('id') id: string) {
+        const result = await this.taskService.findById(id);
+        return { data: result };
     }
 
     // ... rest of the methods
@@ -99,38 +100,41 @@ export class TaskController {
     @Patch(':id')
     @UseInterceptors(FilesInterceptor('files'))
 
-    update(
+    async update(
         @Param('id') id: string,
         @Body() dto: UpdateTaskDto,
         @GetUser('id') userId: string,
         @GetUser('role') role: UserRole,
         @UploadedFiles() files?: Express.Multer.File[],
     ) {
-        return this.taskService.update(id, dto, userId, role, files);
+        const result = await this.taskService.update(id, dto, userId, role, files);
+        return { data: result };
     }
 
     @Patch(':id/submit-review')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
     @UseInterceptors(FilesInterceptor('attachments'))
-    submitReview(
+    async submitReview(
         @Param('id') id: string,
         @Body('remark') remark: string,
         @GetUser('id') userId: string,
         @UploadedFiles() files?: Express.Multer.File[],
     ) {
-        return this.taskService.submitForReview(id, remark, userId, files);
+        const result = await this.taskService.submitForReview(id, remark, userId, files);
+        return { data: result };
     }
 
     @Patch(':id/finalize-complete')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
     @UseInterceptors(FilesInterceptor('attachments'))
-    finalizeComplete(
+    async finalizeComplete(
         @Param('id') id: string,
         @Body('remark') remark: string,
         @GetUser('id') userId: string,
         @UploadedFiles() files?: Express.Multer.File[],
     ) {
-        return this.taskService.finalizeCompletion(id, remark, userId, files);
+        const result = await this.taskService.finalizeCompletion(id, remark, userId, files);
+        return { data: result };
     }
 
     @Patch(':id/reminder')
@@ -145,13 +149,14 @@ export class TaskController {
     @Patch(':id/reject')
     @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER, UserRole.HR, UserRole.EMPLOYEE)
     @UseInterceptors(FilesInterceptor('attachments'))
-    rejectTask(
+    async rejectTask(
         @Param('id') id: string,
         @Body('remark') remark: string,
         @GetUser('id') userId: string,
         @UploadedFiles() files?: Express.Multer.File[],
     ) {
-        return this.taskService.rejectTask(id, remark, userId, files);
+        const result = await this.taskService.rejectTask(id, remark, userId, files);
+        return { data: result };
     }
 
     @Delete(':id')
