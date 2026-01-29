@@ -258,7 +258,10 @@ export class TaskService {
                     { targetTeamId: userId },
                     { createdBy: userId },
                     { workingBy: userId },
-                    { targetGroup: { members: { some: { userId } } } }
+                    {
+                        targetGroup: { members: { some: { userId } } },
+                        ...(isCompletedView ? {} : { assignedTo: null })
+                    }
                 ]
             });
         }
@@ -273,15 +276,8 @@ export class TaskService {
                             { assignedTo: userId },
                             { targetTeamId: userId },
                             {
-                                AND: [
-                                    { targetGroupId: { not: null } },
-                                    {
-                                        OR: [
-                                            { taskAcceptances: { some: { userId: userId, status: 'ACCEPTED' } } },
-                                            { targetGroup: { members: { some: { userId } } } }
-                                        ]
-                                    }
-                                ]
+                                targetGroup: { members: { some: { userId } } },
+                                assignedTo: null
                             }
                         ],
                         taskStatus: TaskStatus.Pending
@@ -315,10 +311,8 @@ export class TaskService {
                     andArray.push({
                         OR: [
                             { assignedTo: userId },
-                            { targetTeamId: userId },
                             { workingBy: userId },
-                            { createdBy: userId },
-                            { targetGroup: { members: { some: { userId } } } }
+                            { targetTeamId: userId }
                         ]
                     });
                     break;
@@ -333,8 +327,7 @@ export class TaskService {
                                 { createdBy: userId },
                                 { assignedTo: userId },
                                 { workingBy: userId },
-                                { targetTeamId: userId },
-                                { targetGroup: { members: { some: { userId } } } }
+                                { targetTeamId: userId }
                             ]
                         });
                     }
