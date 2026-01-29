@@ -96,20 +96,32 @@ export class TaskService {
             console.log(`[TaskService] Found ${members.length} members for Group ${task.targetGroupId}`);
 
             if (members.length > 0) {
-                const acceptanceData = members.map(m => ({
-                    taskId: task.id,
-                    userId: m.userId,
-                    groupId: task.targetGroupId,
-                    status: 'PENDING'
-                }));
-
-                await (this.prisma as any).taskAcceptance.createMany({
-                    data: acceptanceData,
-                    skipDuplicates: true
+                console.log(`[TaskService] Filtering creator (${userId}) from ${members.length} members`);
+                // Filter out the creator so they don't get the acceptance popup
+                const membersToNotify = members.filter(m => {
+                    const isCreator = m.userId === userId;
+                    if (isCreator) console.log(`[TaskService] Successfully filtered out creator: ${userId}`);
+                    return !isCreator;
                 });
-                console.log(`[TaskService] Created ${acceptanceData.length} TaskAcceptance records`);
 
-                members.forEach(m => recipients.add(m.userId));
+                if (membersToNotify.length > 0) {
+                    const acceptanceData = membersToNotify.map(m => ({
+                        taskId: task.id,
+                        userId: m.userId,
+                        groupId: task.targetGroupId,
+                        status: 'PENDING'
+                    }));
+
+                    await (this.prisma as any).taskAcceptance.createMany({
+                        data: acceptanceData,
+                        skipDuplicates: true
+                    });
+
+                    console.log(`[TaskService] Created ${acceptanceData.length} TaskAcceptance records (excluded creator)`);
+                    membersToNotify.forEach(m => recipients.add(m.userId));
+                } else {
+                    console.log(`[TaskService] No other members to notify besides the creator.`);
+                }
             }
         }
 
@@ -153,7 +165,8 @@ export class TaskService {
     async updateAcceptanceStatus(id: string, dto: UpdateTaskAcceptanceDto, userId: string) {
         const { status } = dto;
         const acceptance = await (this.prisma as any).taskAcceptance.findUnique({
-            where: { id }
+            where: { id },
+            include: { pendingTask: true }
         });
 
         if (!acceptance || acceptance.userId !== userId) {
@@ -607,6 +620,25 @@ export class TaskService {
                 type: 'TASK',
                 metadata: { taskId: task.id, taskNo: (task as any).taskNo, type: 'REMINDER' },
             });
+
+            // If it's a group task, ensure/reset the acceptance popup for members
+            if ((task as any).targetGroupId) {
+                await (this.prisma as any).taskAcceptance.upsert({
+                    where: {
+                        taskId_userId: {
+                            taskId: task.id,
+                            userId: recipientId
+                        }
+                    },
+                    update: { status: 'PENDING' },
+                    create: {
+                        taskId: task.id,
+                        userId: recipientId,
+                        groupId: (task as any).targetGroupId,
+                        status: 'PENDING'
+                    }
+                });
+            }
         }
 
         const model: any = (task as any).taskStatus === TaskStatus.Completed ? this.prisma.completedTask : this.prisma.pendingTask;
