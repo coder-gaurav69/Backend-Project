@@ -260,7 +260,10 @@ export class TaskService {
                     { workingBy: userId },
                     {
                         targetGroup: { members: { some: { userId } } },
-                        ...(isCompletedView ? {} : { assignedTo: null })
+                        ...(isCompletedView ? {} : {
+                            assignedTo: null,
+                            taskAcceptances: { none: { userId, status: 'REJECTED' } }
+                        })
                     }
                 ]
             });
@@ -277,7 +280,8 @@ export class TaskService {
                             { targetTeamId: userId },
                             {
                                 targetGroup: { members: { some: { userId } } },
-                                assignedTo: null
+                                assignedTo: null,
+                                taskAcceptances: { none: { userId, status: 'REJECTED' } }
                             }
                         ],
                         taskStatus: TaskStatus.Pending
