@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AutoNumberService } from '../common/services/auto-number.service';
+import { CloudinaryService } from '../common/services/cloudinary.service';
 import { RedisService } from '../redis/redis.service';
 import { CreateTaskDto, UpdateTaskDto, FilterTaskDto, TaskViewMode, UpdateTaskAcceptanceDto } from './dto/task.dto';
 import { NotificationService } from '../notification/notification.service';
@@ -26,27 +27,24 @@ export class TaskService {
         private autoNumberService: AutoNumberService,
         private redisService: RedisService,
         private notificationService: NotificationService,
+        private cloudinaryService: CloudinaryService,
     ) { }
 
     async create(dto: CreateTaskDto, userId: string, files?: Express.Multer.File[]) {
         const taskNo = await this.autoNumberService.generateTaskNo();
         const { toTitleCase } = await import('../common/utils/string-helper');
-        const fs = await import('fs');
-        const path = await import('path');
 
         let document = dto.document;
         if (files && files.length > 0) {
-            const savedPaths: string[] = [];
-            const uploadDir = path.join(process.cwd(), 'uploads');
-            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+            const savedUrls: string[] = [];
 
             for (const file of files) {
-                const fileName = `${taskNo}_${Date.now()}_${file.originalname}`;
-                const uploadPath = path.join(uploadDir, fileName);
-                fs.writeFileSync(uploadPath, file.buffer);
-                savedPaths.push(`/uploads/${fileName}`);
+                const result = await this.cloudinaryService.uploadFile(file);
+                if (result.secure_url) {
+                    savedUrls.push(result.secure_url);
+                }
             }
-            document = savedPaths.join(',');
+            document = savedUrls.join(',');
         }
 
         const task = await this.prisma.pendingTask.create({
@@ -506,20 +504,15 @@ export class TaskService {
 
         let document = task.document;
         if (files && files.length > 0) {
-            const fs = await import('fs');
-            const path = await import('path');
-            const uploadDir = path.join(process.cwd(), 'uploads');
-            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-            const savedPaths: string[] = [];
+            const savedUrls: string[] = [];
             for (const file of files) {
-                const fileName = `${task.taskNo}_${Date.now()}_${file.originalname}`;
-                const uploadPath = path.join(uploadDir, fileName);
-                fs.writeFileSync(uploadPath, file.buffer);
-                savedPaths.push(`/uploads/${fileName}`);
+                const result = await this.cloudinaryService.uploadFile(file);
+                if (result.secure_url) {
+                    savedUrls.push(result.secure_url);
+                }
             }
             const existingDocs = task.document ? task.document.split(',') : [];
-            document = [...existingDocs, ...savedPaths].join(',');
+            document = [...existingDocs, ...savedUrls].join(',');
         }
 
         const updated = await this.prisma.pendingTask.update({
@@ -559,20 +552,15 @@ export class TaskService {
 
         let document = task.document;
         if (files && files.length > 0) {
-            const fs = await import('fs');
-            const path = await import('path');
-            const uploadDir = path.join(process.cwd(), 'uploads');
-            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-            const savedPaths: string[] = [];
+            const savedUrls: string[] = [];
             for (const file of files) {
-                const fileName = `${task.taskNo}_${Date.now()}_${file.originalname}`;
-                const uploadPath = path.join(uploadDir, fileName);
-                fs.writeFileSync(uploadPath, file.buffer);
-                savedPaths.push(`/uploads/${fileName}`);
+                const result = await this.cloudinaryService.uploadFile(file);
+                if (result.secure_url) {
+                    savedUrls.push(result.secure_url);
+                }
             }
             const existingDocs = task.document ? task.document.split(',') : [];
-            document = [...existingDocs, ...savedPaths].join(',');
+            document = [...existingDocs, ...savedUrls].join(',');
         }
 
         try {
@@ -755,20 +743,15 @@ export class TaskService {
 
         let document = task.document;
         if (files && files.length > 0) {
-            const fs = await import('fs');
-            const path = await import('path');
-            const uploadDir = path.join(process.cwd(), 'uploads');
-            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-            const savedPaths: string[] = [];
+            const savedUrls: string[] = [];
             for (const file of files) {
-                const fileName = `${task.taskNo}_${Date.now()}_${file.originalname}`;
-                const uploadPath = path.join(uploadDir, fileName);
-                fs.writeFileSync(uploadPath, file.buffer);
-                savedPaths.push(`/uploads/${fileName}`);
+                const result = await this.cloudinaryService.uploadFile(file);
+                if (result.secure_url) {
+                    savedUrls.push(result.secure_url);
+                }
             }
             const existingDocs = task.document ? task.document.split(',') : [];
-            document = [...existingDocs, ...savedPaths].join(',');
+            document = [...existingDocs, ...savedUrls].join(',');
         }
 
         const updated = await this.prisma.pendingTask.update({
