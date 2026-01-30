@@ -18,6 +18,7 @@ import {
     OtpChannel,
 } from './dto/auth.dto';
 import { NotificationService } from '../notification/notification.service';
+import { CloudinaryService } from '../common/services/cloudinary.service';
 import { UserRole } from '@prisma/client';
 
 @Injectable()
@@ -30,6 +31,7 @@ export class AuthService {
         private configService: ConfigService,
         private redisService: RedisService,
         private notificationService: NotificationService,
+        private cloudinaryService: CloudinaryService,
     ) { }
 
     async register(dto: RegisterDto, ipAddress: string) {
@@ -550,10 +552,24 @@ export class AuthService {
             throw new BadRequestException('Account not found');
         }
 
+        let avatarUrl = dto.avatar;
+
+        // If avatar is base64, upload to Cloudinary
+        if (dto.avatar && (dto.avatar.startsWith('data:image') || dto.avatar.length > 500)) {
+            try {
+                this.logger.log(`Uploading new avatar for user ${userId}`);
+                avatarUrl = await this.cloudinaryService.uploadAvatar(dto.avatar, userId);
+            } catch (error) {
+                this.logger.error(`Failed to upload avatar: ${error.message}`);
+                // Don't fail the whole update, but maybe log it
+            }
+        }
+
         const updated = await this.prisma.team.update({
             where: { id: userId },
             data: {
                 ...dto,
+                avatar: avatarUrl,
             },
         });
 

@@ -31,7 +31,7 @@ export class RequestTransformInterceptor implements NestInterceptor {
         const isExcluded = (key: string) => {
             const lowerKey = key.toLowerCase();
             return (
-                ['email', 'password', 'id', 'swrkey', 'status', 'token', 'url', 'path', 'method'].some((ex) =>
+                ['email', 'password', 'id', 'swrkey', 'status', 'token', 'url', 'path', 'method', 'avatar', 'image', 'document', 'b64'].some((ex) =>
                     lowerKey.includes(ex),
                 ) ||
                 key.endsWith('Id') ||
