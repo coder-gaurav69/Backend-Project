@@ -1,14 +1,12 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
-import { Resend } from 'resend';
 import { NotificationStrategy } from '../interfaces/notification-strategy.interface';
 import { OtpChannel } from '../../auth/dto/auth.dto';
 
 @Injectable()
 export class EmailStrategy implements NotificationStrategy, OnModuleInit {
     private transporter: nodemailer.Transporter | null = null;
-    private resend: Resend | null = null;
     private readonly logger = new Logger(EmailStrategy.name);
 
     constructor(private configService: ConfigService) {
@@ -16,9 +14,7 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
     }
 
     async onModuleInit() {
-        if (this.resend) {
-            this.logger.log('✅ Resend API initialized for email delivery');
-        } else if (this.transporter) {
+        if (this.transporter) {
             try {
                 await this.transporter.verify();
                 this.logger.log(`✅ SMTP connection verified successfully`);
@@ -27,20 +23,11 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
                 this.logger.warn('⚠️  Email OTP delivery may fail. Please check your SMTP credentials.');
             }
         } else {
-            this.logger.warn('⚠️  No Email provider (Resend/SMTP) configured. Email delivery will fail.');
+            this.logger.warn('⚠️  No SMTP provider configured. Email delivery will fail.');
         }
     }
 
     private initializeEmailProvider() {
-        // 1. Try Resend First (Preferred for Production/Reliability)
-        const resendApiKey = this.configService.get('RESEND_API_KEY');
-        if (resendApiKey) {
-            this.logger.log('📧 Initializing Resend API...');
-            this.resend = new Resend(resendApiKey);
-            return;
-        }
-
-        // 2. Fallback to SMTP
         const smtpHost = this.configService.get('SMTP_HOST');
         const smtpUser = this.configService.get('SMTP_USER');
         const smtpPass = this.configService.get('SMTP_PASS');
@@ -85,23 +72,6 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
         const html = this.getEmailHtml(otp);
 
         try {
-            if (this.resend) {
-                // Use Resend
-                const data = await this.resend.emails.send({
-                    from: fromEmail,
-                    to: recipient,
-                    subject: subject,
-                    html: html,
-                });
-
-                if (data.error) {
-                    throw new Error(data.error.message);
-                }
-
-                this.logger.log(`✅ OTP sent via Resend to ${recipient} (ID: ${data.data?.id}) in ${Date.now() - startTime}ms`);
-                return true;
-            }
-
             if (this.transporter) {
                 // Use SMTP
                 await this.transporter.sendMail({
@@ -114,7 +84,7 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
                 return true;
             }
 
-            throw new Error('No email provider configured');
+            throw new Error('No SMTP provider configured');
 
         } catch (error) {
             this.logger.error(`❌ Email failed for ${recipient}: ${error.message}`);
@@ -134,23 +104,6 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
         const html = this.getInvitationHtml(teamName, invitationLink);
 
         try {
-            if (this.resend) {
-                // Use Resend
-                const data = await this.resend.emails.send({
-                    from: fromEmail,
-                    to: recipient,
-                    subject: subject,
-                    html: html,
-                });
-
-                if (data.error) {
-                    throw new Error(data.error.message);
-                }
-
-                this.logger.log(`✅ Invitation sent via Resend to ${recipient} (ID: ${data.data?.id}) in ${Date.now() - startTime}ms`);
-                return true;
-            }
-
             if (this.transporter) {
                 // Use SMTP
                 await this.transporter.sendMail({
@@ -164,7 +117,7 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
                 return true;
             }
 
-            throw new Error('No email provider configured');
+            throw new Error('No SMTP provider configured');
 
         } catch (error) {
             this.logger.error(`❌ Invitation failed for ${recipient}: ${error.message}`);

@@ -130,15 +130,13 @@ export class AuthService {
             throw new UnauthorizedException('Account is not active');
         }
 
-        const otpEnabledSetting = this.configService.get('OTP_ENABLED', 'true') === 'true';
+        const loginMethod = identity.loginMethod;
         const isAdmin = identity.role === UserRole.ADMIN || identity.role === UserRole.SUPER_ADMIN;
+        const isSuperAdmin = identity.role === UserRole.SUPER_ADMIN;
 
-        // Skip OTP if disabled in settings OR if user is an ADMIN
-        if (!otpEnabledSetting || isAdmin) {
-            const reason = isAdmin ? 'Admin role bypass' : 'OTP disabled in settings';
-            this.logger.log(`[AUTH] Skipping OTP for ${identity.email} (${reason})`);
-
-            // Enhanced IP Check (User-specific + Global Whitelist)
+        // 1. IP Check for methods requiring it (Ip_address, Ip_Otp)
+        const requiresIpCheck = loginMethod === 'Ip_address' || loginMethod === 'Ip_Otp';
+        if (requiresIpCheck && !isSuperAdmin) {
             const allowedIps = identity.allowedIps || [];
             const isUserAllowed = allowedIps.includes(ipAddress) || allowedIps.includes('*');
 
@@ -153,12 +151,19 @@ export class AuthService {
                 isGloballyAllowed = !!globalIp;
             }
 
-            const isSuperAdmin = identity.role === UserRole.SUPER_ADMIN;
-
-            if (!isUserAllowed && !isGloballyAllowed && !isSuperAdmin) {
-                this.logger.warn(`Blocked login attempt for ${identity.email} from unauthorized IP: ${ipAddress}`);
+            if (!isUserAllowed && !isGloballyAllowed) {
+                this.logger.warn(`Blocked login attempt for ${identity.email} from unauthorized IP: ${ipAddress} (Method: ${loginMethod})`);
                 throw new UnauthorizedException(`Access denied. Unrecognized IP address (${ipAddress}).`);
             }
+        }
+
+        // 2. Decide if OTP is needed
+        // Skip OTP if loginMethod is General/Ip_address OR if user is an ADMIN
+        const needsOtp = (loginMethod === 'Otp' || loginMethod === 'Ip_Otp') && !isAdmin;
+
+        if (!needsOtp) {
+            const reason = isAdmin ? 'Admin role bypass' : `Login Method: ${loginMethod}`;
+            this.logger.log(`[AUTH] Skipping OTP for ${identity.email} (${reason})`);
 
             // Create session and generate tokens for OTP bypass
             const sessionId = uuidv4();
@@ -190,12 +195,11 @@ export class AuthService {
                 },
             });
 
-            await this.logActivity(identity.id, 'LOGIN', `Account logged in (OTP bypassed: ${reason})`, ipAddress, true);
+            await this.logActivity(identity.id, 'LOGIN', `Account logged in (Mode: ${loginMethod}, OTP bypassed: ${reason})`, ipAddress, true);
 
             // Fetch user with permissions
             const userWithPermissions = await this.getUserWithPermissions(identity.id);
 
-            // Return success with flag indicating OTP was skipped AND tokens/user data
             return {
                 message: `Login successful (${reason})`,
                 email: identity.email,
@@ -207,7 +211,7 @@ export class AuthService {
             };
         }
 
-        // OTP is enabled - use existing OTP flow
+        // OTP is required
         const otp = this.generateOTP();
         const ttl = 300; // 5 mins
         await this.redisService.setLoginOTP(identity.email, otp, ttl);
@@ -218,7 +222,7 @@ export class AuthService {
         await this.notificationService.sendOtp(identity.email, otp, OtpChannel.EMAIL);
 
         return {
-            message: 'Credentials verified. OTP has been sent to your email. Please verify to complete login.',
+            message: `Credentials verified. OTP has been sent via email (Method: ${loginMethod}).`,
             email: identity.email,
             otpSkipped: false,
         };
@@ -233,44 +237,43 @@ export class AuthService {
             throw new UnauthorizedException('Account not found');
         }
 
-        // Check if OTP is enabled via environment variable (default: true)
-        const otpEnabledSetting = this.configService.get('OTP_ENABLED', 'true') === 'true';
+        const loginMethod = identity.loginMethod;
         const isAdmin = identity.role === UserRole.ADMIN || identity.role === UserRole.SUPER_ADMIN;
+        const isSuperAdmin = identity.role === UserRole.SUPER_ADMIN;
 
-        if (otpEnabledSetting && !isAdmin) {
-            // OTP is enabled and user is NOT an admin - validate OTP
+        // 1. Double check IP for methods requiring it (Ip_address, Ip_Otp)
+        const requiresIpCheck = loginMethod === 'Ip_address' || loginMethod === 'Ip_Otp';
+        if (requiresIpCheck && !isSuperAdmin) {
+            const allowedIps = identity.allowedIps || [];
+            const isUserAllowed = allowedIps.includes(ipAddress) || allowedIps.includes('*');
+
+            let isGloballyAllowed = false;
+            if (!isUserAllowed) {
+                const globalIp = await this.prisma.ipAddress.findFirst({
+                    where: {
+                        ipAddress: ipAddress,
+                        status: 'Active',
+                    },
+                });
+                isGloballyAllowed = !!globalIp;
+            }
+
+            if (!isUserAllowed && !isGloballyAllowed) {
+                throw new UnauthorizedException(`Access denied. Unrecognized IP address (${ipAddress}).`);
+            }
+        }
+
+        // 2. OTP Validation Logic
+        const needsOtp = (loginMethod === 'Otp' || loginMethod === 'Ip_Otp') && !isAdmin;
+        if (needsOtp) {
             const storedOtp = await this.redisService.getLoginOTP(dto.email);
-
             if (!storedOtp || storedOtp !== dto.otp) {
                 throw new UnauthorizedException('Invalid or expired OTP');
             }
             this.logger.log(`[AUTH] OTP verified for ${dto.email}`);
         } else {
-            // OTP is disabled OR user is an admin - skip OTP validation
-            const reason = isAdmin ? 'Admin role bypass' : 'OTP disabled in settings';
+            const reason = isAdmin ? 'Admin role bypass' : `Login Method: ${loginMethod}`;
             this.logger.log(`[AUTH] Skipping OTP validation for ${dto.email} (${reason})`);
-        }
-
-        // Enhanced IP Check (User-specific + Global Whitelist)
-        const allowedIps = identity.allowedIps || [];
-        const isUserAllowed = allowedIps.includes(ipAddress) || allowedIps.includes('*');
-
-        let isGloballyAllowed = false;
-        if (!isUserAllowed) {
-            const globalIp = await this.prisma.ipAddress.findFirst({
-                where: {
-                    ipAddress: ipAddress,
-                    status: 'Active',
-                },
-            });
-            isGloballyAllowed = !!globalIp;
-        }
-
-        const isSuperAdmin = identity.role === UserRole.SUPER_ADMIN;
-
-        if (!isUserAllowed && !isGloballyAllowed && !isSuperAdmin) {
-            this.logger.warn(`Blocked login attempt for ${identity.email} from unauthorized IP: ${ipAddress}`);
-            throw new UnauthorizedException(`Access denied. Unrecognized IP address (${ipAddress}).`);
         }
 
         // Create session
@@ -311,7 +314,7 @@ export class AuthService {
         await this.redisService.setRefreshToken(refreshToken, identity.id, refreshExpiry);
 
         // Clean up OTP if it was used
-        if (otpEnabledSetting && !isAdmin) {
+        if (needsOtp) {
             await this.redisService.deleteLoginOTP(identity.email);
         }
 
@@ -324,7 +327,6 @@ export class AuthService {
             },
         });
 
-        const loginMethod = (otpEnabledSetting && !isAdmin) ? 'OTP' : 'Direct (OTP disabled/Admin bypass)';
         await this.logActivity(identity.id, 'LOGIN', `Account logged in via ${loginMethod}`, ipAddress, true);
 
         // Fetch user with permissions
