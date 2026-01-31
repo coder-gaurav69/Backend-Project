@@ -2,6 +2,8 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { MulterModule } from '@nestjs/platform-express';
+import * as multer from 'multer';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { CommonModule } from './common/common.module';
@@ -32,6 +34,14 @@ import { AppService } from './app.service';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+    }),
+
+    // Multer for file uploads (memory storage for Cloudinary)
+    MulterModule.register({
+      storage: multer.memoryStorage(),
+      limits: {
+        fileSize: 20 * 1024 * 1024, // 20MB max file size
+      },
     }),
 
     // Rate Limiting

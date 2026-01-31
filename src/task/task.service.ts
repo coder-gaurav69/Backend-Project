@@ -37,14 +37,23 @@ export class TaskService {
         let document = dto.document;
         if (files && files.length > 0) {
             const savedUrls: string[] = [];
+            // Sanitize taskNo for Cloudinary (remove # and other special characters)
+            const sanitizedTaskNo = taskNo.replace(/[^a-zA-Z0-9_-]/g, '');
 
             for (const file of files) {
-                const timestamp = Date.now();
-                const customName = `${taskNo}_${timestamp}_${file.originalname}`;
-                const folder = `hrms/tasks/${taskNo}`;
-                const result = await this.cloudinaryService.uploadFile(file, folder, customName);
-                if (result.secure_url) {
-                    savedUrls.push(result.secure_url);
+                try {
+                    const timestamp = Date.now();
+                    const customName = `${sanitizedTaskNo}_${timestamp}_${file.originalname}`;
+                    const folder = `hrms/tasks/${sanitizedTaskNo}`;
+                    console.log(`[TaskService] Uploading file: ${file.originalname}, size: ${file.size}, mimetype: ${file.mimetype}`);
+                    const result = await this.cloudinaryService.uploadFile(file, folder, customName);
+                    console.log(`[TaskService] Cloudinary upload result:`, result?.secure_url ? 'SUCCESS' : 'FAILED');
+                    if (result.secure_url) {
+                        savedUrls.push(result.secure_url);
+                    }
+                } catch (uploadError) {
+                    console.error(`[TaskService] File upload error:`, uploadError);
+                    throw uploadError;
                 }
             }
             document = savedUrls.join(',');

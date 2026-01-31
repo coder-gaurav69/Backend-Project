@@ -38,7 +38,7 @@ async function bootstrap() {
   app.use(compression());
 
   // Cookie Parser
-  app.use(cookieParser(configService.get('COOKIE_SECRET', 'hrms-secret')));
+  app.use(cookieParser(configService.get('COOKIE_SECRET', 'task-manager-secret')));
 
   // CORS Configuration
   const corsOrigins = configService.get('CORS_ORIGIN')?.split(',').map(origin => origin.trim()) || ['http://localhost:5173'];
@@ -69,7 +69,7 @@ async function bootstrap() {
   logger.log(`🚀 Application is running on: http://localhost:${port}`);
   logger.log(`📚 API Version: v1 (Manual Prefix)`);
   logger.log(`🔒 Environment: ${configService.get('NODE_ENV', 'development')}`);
-  logger.log(`✅ HRMS Backend is ready!`);
+  logger.log(`✅ Task Manager Backend is ready!`);
 }
 
 bootstrap();

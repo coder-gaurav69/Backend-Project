@@ -1,8 +1,8 @@
-# HRMS Backend - Production-Grade Enterprise Application
+# Task Manager Backend - Production-Grade Enterprise Application
 
 ## 🚀 Overview
 
-A **complete, production-ready, highly secure, and scalable** HRMS (Human Resource Management System) backend built with **NestJS**, **PostgreSQL**, **Prisma**, and **Redis**.
+A **complete, production-ready, highly secure, and scalable** Task Manager (Human Resource Management System) backend built with **NestJS**, **PostgreSQL**, **Prisma**, and **Redis**.
 
 ## 📋 Features
 
@@ -60,7 +60,7 @@ A **complete, production-ready, highly secure, and scalable** HRMS (Human Resour
 ## 📁 Project Structure
 
 ```
-HRMS Backend/
+Task Manager Backend/
 ├── prisma/
 │   └── schema.prisma          # Database schema
 ├── src/
@@ -113,7 +113,7 @@ HRMS Backend/
 
 1. **Clone and navigate to the project**
    ```bash
-   cd "HRMS Backend"
+   cd "Task Manager Backend"
    ```
 
 2. **Install dependencies**
@@ -379,7 +379,7 @@ Proprietary - All rights reserved
 ## 👨‍💻 Author
 
 **Senior Backend Architect**  
-Enterprise HRMS Backend System
+Enterprise Task Manager Backend System
 
 ---
 
