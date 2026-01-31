@@ -275,7 +275,7 @@ export class TaskService {
 
         const model: any = isCompletedView ? this.prisma.completedTask : this.prisma.pendingTask;
         const andArray: any[] = [];
-        const isAdmin = role === UserRole.ADMIN || role === UserRole.ADMIN || role === UserRole.HR || role === UserRole.MANAGER;
+        const isAdmin = role === UserRole.ADMIN || role === UserRole.HR || role === UserRole.MANAGER;
 
         // 1. Priority Filters (Project, Priority, Search)
         if (filter.projectId) andArray.push({ projectId: filter.projectId });
@@ -312,6 +312,11 @@ export class TaskService {
             };
 
             switch (filter.viewMode) {
+                case TaskViewMode.ALL:
+                    // No additional filters needed for Admin to show all.
+                    // Involvement check for non-admins is handled in the fallback below.
+                    break;
+
                 case TaskViewMode.MY_PENDING:
                     andArray.push({
                         taskStatus: TaskStatus.Pending,

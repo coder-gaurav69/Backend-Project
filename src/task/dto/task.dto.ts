@@ -164,6 +164,7 @@ export class FilterTaskDto extends PaginationDto {
 }
 
 export enum TaskViewMode {
+    ALL = 'ALL',
     MY_PENDING = 'MY_PENDING',
     MY_COMPLETED = 'MY_COMPLETED',
     TEAM_PENDING = 'TEAM_PENDING',
