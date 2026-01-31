@@ -24,8 +24,8 @@ export class CreateTeamDto {
     taskAssignPermission?: string;
 
     @IsUUID()
-    @IsOptional()
-    clientGroupId?: string;
+    @IsNotEmpty()
+    clientGroupId: string;
 
     @IsUUID()
     @IsOptional()

@@ -449,7 +449,14 @@ export class AuthService {
             parseInt(this.configService.get('OTP_EXPIRATION', '600')),
         );
 
-        this.logger.log(`Password reset OTP for ${team.email}: ${otp}`);
+        // Send Email
+        try {
+            await this.notificationService.sendForgotPasswordOtp(team.email, otp);
+            this.logger.log(`[FORGOT_PASSWORD] OTP sent to ${team.email}`);
+        } catch (error) {
+            this.logger.error(`[FORGOT_PASSWORD_ERROR] Failed to send email to ${team.email}: ${error.message}`);
+            // We still return success-like message to prevent user enumeration
+        }
 
         return { message: 'If email exists, OTP has been sent' };
     }

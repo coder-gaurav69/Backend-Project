@@ -16,43 +16,49 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
     async onModuleInit() {
         if (this.transporter) {
             try {
-                await this.transporter.verify();
-                this.logger.log(`✅ SMTP connection verified successfully`);
+                // Verify connection on startup to catch config issues early
+                await Promise.race([
+                    this.transporter.verify(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('SMTP Verification Timeout')), 10000))
+                ]);
+                this.logger.log(`✅ SMTP delivery channel verified (${this.configService.get('SMTP_HOST')})`);
             } catch (error) {
                 this.logger.error(`❌ SMTP connection failed: ${error.message}`);
-                this.logger.warn('⚠️  Email OTP delivery may fail. Please check your SMTP credentials.');
+                this.logger.warn('⚠️  System starting without verified email delivery. Check SMTP credentials in production.');
             }
         } else {
-            this.logger.warn('⚠️  No SMTP provider configured. Email delivery will fail.');
+            this.logger.warn('⚠️  No SMTP provider configured. Transactional emails (OTP/Invitations) will fail.');
         }
     }
 
     private initializeEmailProvider() {
-        const smtpHost = this.configService.get('SMTP_HOST');
-        const smtpUser = this.configService.get('SMTP_USER');
-        const smtpPass = this.configService.get('SMTP_PASS');
-        const smtpPort = parseInt(this.configService.get('SMTP_PORT', '587'));
-        const smtpSecure = this.configService.get('SMTP_SECURE') === 'true' || smtpPort === 465;
+        const host = this.configService.get('SMTP_HOST');
+        const user = this.configService.get('SMTP_USER');
+        const pass = this.configService.get('SMTP_PASS');
+        const port = parseInt(this.configService.get('SMTP_PORT', '587'));
 
-        if (!smtpHost || !smtpUser || !smtpPass) {
-            this.logger.warn('⚠️  SMTP configuration incomplete (missing SMTP_HOST, SMTP_USER, or SMTP_PASS).');
+        // Use secure connection for port 465 (SSL), else use STARTTLS (port 587)
+        const secure = this.configService.get('SMTP_SECURE') === 'true' || port === 465;
+
+        if (!host || !user || !pass) {
             return;
         }
 
-        this.logger.log(`📧 Initializing SMTP: ${smtpHost}:${smtpPort} (Secure: ${smtpSecure}, User: ${smtpUser})`);
+        this.logger.log(`📧 Configured SMTP channel: ${host}:${port} (SSL/TLS: ${secure})`);
 
         this.transporter = nodemailer.createTransport({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            auth: {
-                user: smtpUser,
-                pass: smtpPass,
-            },
+            host,
+            port,
+            secure,
+            auth: { user, pass },
             pool: true,
             maxConnections: 5,
+            maxMessages: 100,
+            rateDelta: 1000,
+            rateLimit: 5, // Limit 5 emails per second for stability
             tls: {
-                rejectUnauthorized: false,
+                // Do not fail on invalid certificates (useful for some enterprise SMTPs)
+                rejectUnauthorized: this.configService.get('NODE_ENV') === 'production',
                 minVersion: 'TLSv1.2',
             },
         });
@@ -63,65 +69,70 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
     }
 
     async sendOtp(recipient: string, otp: string): Promise<boolean> {
-        const startTime = Date.now();
-        const fromEmail = this.configService.get('SMTP_FROM') || 'no-reply@missionhrms.com';
-
-        this.logger.debug(`[EMAIL_Mode] Sender configured: ${fromEmail}`);
-
-        const subject = '🔐 Your HRMS Verification Code';
-        const html = this.getEmailHtml(otp);
+        const from = this.configService.get('SMTP_FROM') || 'HRMS <no-reply@missionhrms.com>';
+        const subject = '🔐 Verification Code - Mission HRMS';
 
         try {
-            if (this.transporter) {
-                // Use SMTP
-                await this.transporter.sendMail({
-                    from: fromEmail,
-                    to: recipient,
-                    subject: subject,
-                    html: html,
-                });
-                this.logger.log(`✅ OTP sent via SMTP to ${recipient} in ${Date.now() - startTime}ms`);
-                return true;
-            }
+            if (!this.transporter) throw new Error('SMTP transporter not initialized');
 
-            throw new Error('No SMTP provider configured');
+            const info = await this.transporter.sendMail({
+                from,
+                to: recipient,
+                subject,
+                html: this.getEmailHtml(otp),
+            });
 
+            this.logger.debug(`[SMTP] OTP sent to ${recipient}. MessageId: ${info.messageId}`);
+            return true;
         } catch (error) {
-            this.logger.error(`❌ Email failed for ${recipient}: ${error.message}`);
-            throw new Error(`Email delivery failed: ${error.message}`);
+            this.logger.error(`[SMTP_ERROR] Failed to send OTP to ${recipient}: ${error.message}`);
+            throw new Error(`Email delivery blocked. Please contact system admin.`);
+        }
+    }
+
+    async sendForgotPasswordOtp(recipient: string, otp: string): Promise<boolean> {
+        const from = this.configService.get('SMTP_FROM') || 'HRMS <no-reply@missionhrms.com>';
+        const subject = '🔐 Password Reset Code - Mission HRMS';
+
+        try {
+            if (!this.transporter) throw new Error('SMTP transporter not initialized');
+
+            const info = await this.transporter.sendMail({
+                from,
+                to: recipient,
+                subject,
+                html: this.getForgotPasswordHtml(otp),
+            });
+
+            this.logger.debug(`[SMTP] Forgot Password OTP sent to ${recipient}. MessageId: ${info.messageId}`);
+            return true;
+        } catch (error) {
+            this.logger.error(`[SMTP_ERROR] Failed to send forgot password OTP to ${recipient}: ${error.message}`);
+            throw new Error(`Email delivery blocked. Please contact system admin.`);
         }
     }
 
     async sendInvitation(recipient: string, teamName: string, token: string): Promise<boolean> {
-        const startTime = Date.now();
-        const fromEmail = this.configService.get('SMTP_FROM') || 'no-reply@missionhrms.com';
-
-        this.logger.debug(`[EMAIL_Mode] Sender configured: ${fromEmail}`);
-
-        const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
+        const from = this.configService.get('SMTP_FROM') || 'HRMS <no-reply@missionhrms.com>';
+        const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost:5173';
         const invitationLink = `${frontendUrl}/set-password?token=${token}&email=${recipient}`;
-        const subject = '🤝 Welcome to Mission HRMS - Set Your Password';
-        const html = this.getInvitationHtml(teamName, invitationLink);
+        const subject = '🤝 Create Your Account - Mission HRMS';
 
         try {
-            if (this.transporter) {
-                // Use SMTP
-                await this.transporter.sendMail({
-                    from: fromEmail,
-                    to: recipient,
-                    subject: subject,
-                    html: html,
-                });
+            if (!this.transporter) throw new Error('SMTP transporter not initialized');
 
-                this.logger.log(`✅ Invitation sent via SMTP to ${recipient} in ${Date.now() - startTime}ms`);
-                return true;
-            }
+            await this.transporter.sendMail({
+                from,
+                to: recipient,
+                subject,
+                html: this.getInvitationHtml(teamName, invitationLink),
+            });
 
-            throw new Error('No SMTP provider configured');
-
+            this.logger.log(`[SMTP] Invitation delivered to ${recipient}`);
+            return true;
         } catch (error) {
-            this.logger.error(`❌ Invitation failed for ${recipient}: ${error.message}`);
-            throw new Error(`Invitation delivery failed: ${error.message}`);
+            this.logger.error(`[SMTP_ERROR] Invitation failed for ${recipient}: ${error.message}`);
+            throw new Error(`Critical: Could not deliver invitation email.`);
         }
     }
 
@@ -170,6 +181,34 @@ export class EmailStrategy implements NotificationStrategy, OnModuleInit {
                     </div>
                     <p style="font-size: 14px; color: #666; margin-top: 20px;">⏱️ This code will expire in <strong>10 minutes</strong>.</p>
                     <p style="font-size: 14px; color: #666; margin-top: 10px;">If you didn't request this code, please ignore this email.</p>
+                    <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+                    <p style="font-size: 12px; color: #999; text-align: center;">© ${new Date().getFullYear()} HRMS. All rights reserved.</p>
+                </div>
+            </body>
+            </html>
+        `;
+    }
+
+    private getForgotPasswordHtml(otp: string): string {
+        return `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            </head>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background: linear-gradient(135deg, #FF9966 0%, #FF5E62 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
+                    <h1 style="color: white; margin: 0; font-size: 24px;">🔑 Password Reset</h1>
+                </div>
+                <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+                    <p style="font-size: 16px; margin-bottom: 20px;">Hello,</p>
+                    <p style="font-size: 16px; margin-bottom: 20px;">We received a request to reset your password. Use the following code to proceed:</p>
+                    <div style="background: white; border: 2px dashed #FF5E62; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
+                        <span style="font-size: 32px; font-weight: bold; color: #FF5E62; letter-spacing: 8px;">${otp}</span>
+                    </div>
+                    <p style="font-size: 14px; color: #666; margin-top: 20px;">⏱️ This code is valid for <strong>10 minutes</strong>.</p>
+                    <p style="font-size: 14px; color: #666; margin-top: 10px;">If you didn't request a password reset, you can safely ignore this email.</p>
                     <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
                     <p style="font-size: 12px; color: #999; text-align: center;">© ${new Date().getFullYear()} HRMS. All rights reserved.</p>
                 </div>

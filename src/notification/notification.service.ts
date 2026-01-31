@@ -205,6 +205,10 @@ export class NotificationService {
         }
     }
 
+    async sendForgotPasswordOtp(recipient: string, otp: string): Promise<void> {
+        await this.emailStrategy.sendForgotPasswordOtp(recipient, otp);
+    }
+
     async sendInvitation(recipient: string, teamName: string, token: string): Promise<void> {
         try {
             await this.emailStrategy.sendInvitation(recipient, teamName, token);
